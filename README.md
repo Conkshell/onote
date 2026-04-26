@@ -1,8 +1,14 @@
 # Onote
 
-Onote is an Obsidian community plugin for turning a timestamped source note into a reviewable action plan and then executing that plan into multiple durable derivative notes plus tracker updates.
+Onote is an Obsidian-based personal operating system for turning raw notes into organized knowledge, action, and strategy.
 
-It is built for operating notes, leadership notes, meeting notes, strategy notes, coaching notes, and program notes where one source note often contains several distinct topics that should live in different places.
+It is designed for people who work across many programs, meetings, people, and decisions, and who need a lightweight way to capture messy notes first and organize them later. Onote lets you write naturally in Obsidian, generate an editable AI action plan, and then create structured derivative notes, tasks, program updates, strategy notes, coaching notes, and dashboards from that reviewed plan.
+
+The core idea is simple:
+
+> Capture raw thoughts quickly. Review the AI’s interpretation. Execute the approved structure into your knowledge system.
+
+Onote is not meant to replace Obsidian. It makes Obsidian more operational by helping transform unstructured notes into durable program context, open actions, risks, decisions, strategy, and leadership memory.
 
 ## What It Does
 
