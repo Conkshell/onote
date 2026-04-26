@@ -27,120 +27,42 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
+var DEFAULT_PROGRAMS = [
+  { name: "MEGALODON", acronyms: ["MEG"] },
+  { name: "MEGALODON 2", acronyms: ["MEG2"] },
+  { name: "Object Based Orchestration", acronyms: ["OBO"] },
+  { name: "STARSKIPPER", acronyms: ["StS"] },
+  { name: "THRESHER", acronyms: ["THR"] },
+  { name: "DRAGONSPELL", acronyms: ["DS"] }
+];
+var DEFAULT_CATEGORIES = [
+  { name: "Programs", folderPath: "Programs", description: "Program-specific delivery, roadmap, release, and execution notes." },
+  { name: "Leadership", folderPath: "Leadership", description: "Leadership decisions, management observations, ownership, and execution notes." },
+  { name: "Strategy", folderPath: "Strategy", description: "Strategy, operating model, and directional thinking." },
+  { name: "People", folderPath: "People", description: "Coaching, performance, role fit, and people-development notes." },
+  { name: "Meetings", folderPath: "Meetings", description: "Meeting-derived notes and meeting follow-through." },
+  { name: "Reference", folderPath: "Reference", description: "Reference material, definitions, concepts, and operating knowledge." },
+  { name: "Scratchpad", folderPath: "Scratchpad", description: "Temporary thinking, working drafts, and exploratory note fragments." }
+];
 var DEFAULT_SETTINGS = {
   apiKey: "",
   model: "gpt-4.1-mini",
-  followUpTrackerPath: "Follow-Ups.md",
-  delegationTrackerPath: "Delegations.md",
-  strategyTrackerPath: "Strategy Themes.md",
-  peopleCoachingTrackerPath: "People - Coaching.md",
+  followUpTrackerPath: "Action Plans/Follow-Ups.md",
+  delegationTrackerPath: "Action Plans/Delegations.md",
+  strategyTrackerPath: "Strategy/Strategy Themes.md",
+  peopleCoachingTrackerPath: "People/People - Coaching.md",
   acronymListPath: "Acronyms.md",
   programNotesFolder: "Programs",
   aiContextFolderPath: "System/AI Context",
-  archiveFolderPath: "System/Onote Archive"
+  archiveFolderPath: "Archive",
+  archiveCompletedActionPlans: false,
+  programs: DEFAULT_PROGRAMS,
+  categories: DEFAULT_CATEGORIES
 };
-var DEFAULT_CONTEXT_FILES = [
-  {
-    path: "Program Glossary.md",
-    content: `# Program Glossary
-
-## STARSKIPPER
-Acronyms: StS
-Type: Program
-
-## Object Based Orchestration
-Acronyms: OBO
-Type: Program
-
-## DRAGONSPELL
-Acronyms: DS
-Type: Program
-
-## THRESHER
-Acronyms: THR
-Type: Program
-
-## MEGALODON
-Acronyms: MEG
-Type: Program
-
-## MEGALODON 2
-Acronyms: MEG2
-Type: Program
-Related: [[MEGALODON]]
-`
-  },
-  {
-    path: "Organizational Vocabulary.md",
-    content: `# Organizational Vocabulary
-
-## ISG
-Meaning: Intelligence Solutions Group
-Type: Organization / portfolio
-
-## PMO
-Meaning: Government Program Management Office
-
-## PIPE
-Meaning: Increment planning event
-Rule: Do not rewrite PIPE as pipeline.
-`
-  },
-  {
-    path: "Processing Rules.md",
-    content: `# Processing Rules
-
-## Related Programs / Organizations
-- If a program, acronym, organization, or entity appears in the raw note, summary, revised note title, revised note draft, or extracted items, include it in Related Programs or Related Organizations.
-- Use canonical names from the Program Glossary.
-- Treat acronyms and full names as equivalent.
-- If MEG is mentioned, use MEGALODON.
-- If MEG2 is mentioned, use MEGALODON 2.
-- If THR is mentioned, use THRESHER.
-- If DS is mentioned, use DRAGONSPELL.
-- If OBO is mentioned, use Object Based Orchestration.
-- If StS is mentioned, use STARSKIPPER.
-- If ISG is mentioned, include ISG as a related organization/entity.
-
-## Suggested Links
-- Suggested links should be durable entity or concept notes.
-- Prefer links to programs, organizations, people, teams, processes, roles, risks, and strategic themes.
-- Do not suggest links to daily notes, action-plan notes, tracker files, or temporary processing artifacts.
-- Do not suggest links whose title begins with "#".
-- Good examples: [[ISG]], [[MEGALODON]], [[Release Process]], [[Roadmap]], [[DIT]], [[Leadership Bench]], [[Succession Planning]], [[PM Expectations]], [[Operating Rhythm]], [[Product-Solutions Boundary]], [[Operational Readiness]].
-
-## Formatting and Link Rules
-- Suggested Links must be valid Obsidian wiki links in the form [[Note Name]].
-- Do not suggest links to AI context files, including [[Processing Rules]], [[Organizational Vocabulary]], [[Program Glossary]], [[Acronyms]], or any note under System/AI Context.
-- Preserve known acronyms exactly: PMO, PIPE, ISG, OBO, StS, DS, THR, MEG, MEG2.
-- Do not split acronyms into words. PMO should never become "PM O".
-- Preserve the difference between "remember" and "attend"; a reminder should stay a reminder unless the note explicitly says to attend.
-- Suggested Links should be durable topic/entity notes, not temporary processing artifacts.
-
-## Decisions
-- Only list a decision if the note clearly indicates that a choice has already been made.
-- Do not convert action items, questions, ideas, tentative thoughts, or coaching intentions into decisions.
-- Phrases like "maybe", "might", "still thinking", "seems", "could", "need to think", and "probably" usually indicate uncertainty, not decisions.
-
-## Action Items
-- Action items are specific things the user should do, ask, review, prepare, clarify, remember, or investigate.
-
-## Delegations
-- Delegations are only items the user assigned to another person.
-- Do not infer delegation merely because a person is mentioned.
-
-## Strategy Recommendations
-- Strategy recommendations are higher-level implications, organizational design ideas, program direction, recurring patterns, or possible future operating model changes.
-- Preserve uncertainty when the raw note is uncertain.
-
-## People / Coaching Notes
-- Only create people/coaching notes when the note refers to a specific person's performance, behavior, development, role fit, or coaching need.
-- Do not create generic coaching notes about communication unless tied to a specific person.
-`
-  }
-];
-var REVISED_NOTE_START = "<!-- ONOTE_REVISED_NOTE_START -->";
-var REVISED_NOTE_END = "<!-- ONOTE_REVISED_NOTE_END -->";
+var ACTION_PLANS_FOLDER = "Action Plans";
+var ACTION_PLANS_COMPLETED_FOLDER = "Action Plans/Completed";
+var REVISED_NOTE_START = "<!-- ONOTE_DERIVATIVE_NOTES_START -->";
+var REVISED_NOTE_END = "<!-- ONOTE_DERIVATIVE_NOTES_END -->";
 var ACRONYM_FILE_HEADER = `# Acronyms
 
 | Acronym | Full Name | First Seen | Source |
@@ -168,13 +90,47 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     this.addSettingTab(new OnoteSettingTab(this.app, this));
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    this.settings.programs = this.normalizePrograms(loaded?.programs ?? DEFAULT_PROGRAMS);
+    this.settings.categories = this.normalizeCategories(loaded?.categories ?? DEFAULT_CATEGORIES);
   }
   async saveSettings() {
     await this.saveData(this.settings);
   }
+  normalizePrograms(value) {
+    if (!Array.isArray(value)) {
+      return DEFAULT_PROGRAMS;
+    }
+    const programs = value.map((item) => {
+      if (typeof item !== "object" || item === null) {
+        return null;
+      }
+      const record = item;
+      const name = this.asString(record.name);
+      const acronyms = Array.isArray(record.acronyms) ? record.acronyms.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean) : [];
+      return name ? { name, acronyms } : null;
+    }).filter((item) => item !== null);
+    return programs.length > 0 ? programs : DEFAULT_PROGRAMS;
+  }
+  normalizeCategories(value) {
+    if (!Array.isArray(value)) {
+      return DEFAULT_CATEGORIES;
+    }
+    const categories = value.map((item) => {
+      if (typeof item !== "object" || item === null) {
+        return null;
+      }
+      const record = item;
+      const name = this.asString(record.name);
+      const folderPath = this.asString(record.folderPath);
+      const description = this.asString(record.description);
+      return name && folderPath ? { name, folderPath, description } : null;
+    }).filter((item) => item !== null);
+    return categories.length > 0 ? categories : DEFAULT_CATEGORIES;
+  }
   async createActionPlanFromCurrentNote() {
-    new import_obsidian.Notice("Onote: reading current note...");
+    new import_obsidian.Notice("Onote: reading current source note...");
     const file = this.app.workspace.getActiveFile();
     if (!file || file.extension !== "md") {
       new import_obsidian.Notice("Onote: no active Markdown note.");
@@ -191,17 +147,10 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     try {
       const noteContent = await this.app.vault.read(file);
       await this.registerAcronymsFromNote(file, noteContent);
-      const programCandidates = this.getProgramCandidates();
-      const relatedNotes = this.getRelatedMarkdownNotes(file);
       const aiContext = await this.loadAIContext();
-      new import_obsidian.Notice("Onote: sending note to OpenAI...");
-      const actionPlan = await this.callOpenAI(
-        file,
-        noteContent,
-        programCandidates,
-        relatedNotes,
-        aiContext
-      );
+      const relatedNotes = this.getRelatedMarkdownNotes(file);
+      new import_obsidian.Notice("Onote: sending source note to OpenAI...");
+      const actionPlan = await this.callOpenAI(file, noteContent, relatedNotes, aiContext);
       new import_obsidian.Notice("Onote: creating action plan note...");
       const planFile = await this.createActionPlanNote(file, actionPlan);
       await this.app.workspace.getLeaf(true).openFile(planFile);
@@ -226,128 +175,224 @@ var OnotePlugin = class extends import_obsidian.Plugin {
         new import_obsidian.Notice("Onote: this note is not a valid action plan.");
         return;
       }
+      if (parsed.derivativeNotes.length === 0) {
+        throw new Error("No derivative notes were parsed from Proposed Derivative Notes.");
+      }
       const sourceFile = this.app.vault.getAbstractFileByPath(parsed.sourceNotePath);
       if (!(sourceFile instanceof import_obsidian.TFile)) {
-        throw new Error(`Original note not found: ${parsed.sourceNotePath}`);
+        throw new Error(`Source note not found: ${parsed.sourceNotePath}`);
       }
-      const revisedNotePath = await this.getAvailableMarkdownPath(
-        this.buildSiblingPath(sourceFile, parsed.revisedNoteTitle || `${sourceFile.basename} - Summary`)
+      const completedActionPlanPath = this.settings.archiveCompletedActionPlans ? null : await this.getAvailableMarkdownPath(
+        `${ACTION_PLANS_COMPLETED_FOLDER}/${this.sanitizeFileName(planFile.basename)}.md`
       );
-      const revisedNoteContent = this.buildRevisedNoteContent(sourceFile, parsed);
-      new import_obsidian.Notice("Onote: creating approved outputs...");
-      const revisedNote = await this.app.vault.create(revisedNotePath, revisedNoteContent);
-      await this.appendItemsToTracker(
-        this.settings.followUpTrackerPath,
-        "Follow-Ups",
-        revisedNote,
-        parsed.actionItems
-      );
-      await this.appendItemsToTracker(
-        this.settings.delegationTrackerPath,
-        "Delegations",
-        revisedNote,
-        parsed.delegations
-      );
-      await this.appendItemsToTracker(
-        this.settings.strategyTrackerPath,
-        "Strategy Themes",
-        revisedNote,
-        parsed.strategyRecommendations
-      );
-      await this.appendItemsToTracker(
-        this.settings.peopleCoachingTrackerPath,
-        "People - Coaching",
-        revisedNote,
-        parsed.peopleCoachingNotes
-      );
-      const archivePaths = await this.archivePlanFiles(sourceFile, planFile);
-      await this.app.workspace.getLeaf(true).openFile(revisedNote);
-      new import_obsidian.Notice(
-        `Onote: action plan executed. Archived source files to ${archivePaths.join(" and ")}.`,
-        8e3
-      );
+      new import_obsidian.Notice("Onote: creating derivative notes...");
+      const derivativeFiles = await this.createDerivativeNotesFromPlan(sourceFile, planFile, completedActionPlanPath ?? planFile.path, parsed);
+      new import_obsidian.Notice("Onote: updating trackers...");
+      const primaryReference = derivativeFiles[0] ?? sourceFile;
+      await this.appendItemsToTracker(this.settings.followUpTrackerPath, "Follow-Ups", primaryReference, parsed.actionItems);
+      await this.appendItemsToTracker(this.settings.delegationTrackerPath, "Delegations", primaryReference, parsed.delegations);
+      await this.appendItemsToTracker(this.settings.strategyTrackerPath, "Strategy Themes", primaryReference, parsed.strategyRecommendations);
+      await this.appendItemsToTracker(this.settings.peopleCoachingTrackerPath, "People - Coaching", primaryReference, parsed.peopleCoachingNotes);
+      new import_obsidian.Notice("Onote: finalizing source note and action plan...");
+      const sourceArchiveNotice = await this.archiveSourceNote(sourceFile);
+      const actionPlanNotice = await this.completeActionPlan(planFile, completedActionPlanPath);
+      await this.app.workspace.getLeaf(true).openFile(derivativeFiles[0] ?? primaryReference);
+      new import_obsidian.Notice(`Onote: created ${derivativeFiles.length} derivative notes. ${sourceArchiveNotice} ${actionPlanNotice}`, 9e3);
     } catch (error) {
       console.error("Onote action plan execution failed", error);
       const message = error instanceof Error ? error.message : "Unknown error";
-      new import_obsidian.Notice(`Onote execution failed: ${message}`, 8e3);
+      new import_obsidian.Notice(`Onote execution failed: ${message}`, 9e3);
     }
   }
-  getProgramCandidates() {
-    const folder = this.normalizeFolder(this.settings.programNotesFolder);
-    if (!folder) {
-      return [];
+  async createDerivativeNotesFromPlan(sourceFile, actionPlanFile, finalActionPlanPath, plan) {
+    const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
+    const createdFiles = [];
+    for (const derivative of plan.derivativeNotes) {
+      const normalized = this.normalizeDerivativeNotePlan(derivative);
+      const category = await this.ensureCategory(normalized.category);
+      const folderPath = await this.resolveDerivativeFolder(normalized, category);
+      const derivativePath = await this.getAvailableMarkdownPath(
+        `${folderPath}/${this.ensureTimestampedTitle(timestampPrefix, normalized.title)}.md`
+      );
+      const derivativeContent = this.buildDerivativeNoteContent(
+        normalized,
+        sourceFile,
+        finalActionPlanPath
+      );
+      const derivativeFile = await this.app.vault.create(derivativePath, derivativeContent);
+      createdFiles.push(derivativeFile);
+      await this.ensureCategoryHomePage(category);
+      await this.appendLinkUnderSection(category.homePagePath, "Recent Notes", `[[${this.app.metadataCache.fileToLinktext(derivativeFile, category.homePagePath, true)}]]`);
+      const primaryProgram = normalized.relatedPrograms[0];
+      if (primaryProgram) {
+        const primaryProgramHome = await this.ensureProgramHomePage(primaryProgram);
+        await this.appendLinkUnderSection(primaryProgramHome, "Recent Notes", `[[${this.app.metadataCache.fileToLinktext(derivativeFile, primaryProgramHome, true)}]]`);
+        for (const program of normalized.relatedPrograms.slice(1)) {
+          const relatedProgramHome = await this.ensureProgramHomePage(program);
+          await this.appendLinkUnderSection(relatedProgramHome, "Recent Notes", `[[${this.app.metadataCache.fileToLinktext(derivativeFile, relatedProgramHome, true)}]]`);
+        }
+      }
     }
-    return this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${folder}/`)).map((file) => file.basename).sort((a, b) => a.localeCompare(b));
+    return createdFiles;
+  }
+  normalizeDerivativeNotePlan(plan) {
+    const categoryName = this.normalizeCategoryName(plan.category);
+    return {
+      title: this.asString(plan.title) || "Untitled Derivative",
+      category: categoryName,
+      folder: this.normalizeFilePath(plan.folder),
+      relatedPrograms: this.normalizeProgramList(plan.relatedPrograms),
+      relatedOrganizations: this.asStringArray(plan.relatedOrganizations).map((entry) => this.extractWikiLinkTitle(entry)),
+      relatedPeople: this.asStringArray(plan.relatedPeople).map((entry) => this.extractWikiLinkTitle(entry)),
+      summaryMarkdown: this.asString(plan.summaryMarkdown),
+      tags: this.asStringArray(plan.tags).map((tag) => tag.replace(/^#/, ""))
+    };
+  }
+  async ensureCategory(categoryName) {
+    const existing = this.settings.categories.find(
+      (category2) => category2.name.toLowerCase() === categoryName.toLowerCase()
+    );
+    const category = existing ?? {
+      name: categoryName,
+      folderPath: this.sanitizeFileName(categoryName),
+      description: ""
+    };
+    await this.ensureFolderExists(category.folderPath);
+    return {
+      ...category,
+      homePagePath: `${category.folderPath}/${this.sanitizeFileName(category.name)}.md`
+    };
+  }
+  async ensureCategoryHomePage(category) {
+    const existing = this.app.vault.getAbstractFileByPath(category.homePagePath);
+    if (existing instanceof import_obsidian.TFile) {
+      return;
+    }
+    const content = [
+      `# ${category.name}`,
+      "",
+      "## Purpose",
+      "",
+      category.description || "_Add category purpose._",
+      "",
+      "## Recent Notes",
+      "",
+      "## Related Topics",
+      ""
+    ].join("\n");
+    await this.app.vault.create(category.homePagePath, content);
+  }
+  async ensureProgramHomePage(programName) {
+    const programsRoot = this.resolveProgramsRoot();
+    const folderPath = `${programsRoot}/${this.sanitizeFileName(programName)}`;
+    await this.ensureFolderExists(folderPath);
+    const homePath = `${folderPath}/${this.sanitizeFileName(programName)}.md`;
+    const existing = this.app.vault.getAbstractFileByPath(homePath);
+    if (!(existing instanceof import_obsidian.TFile)) {
+      const content = [
+        `# ${programName}`,
+        "",
+        "## Purpose",
+        "",
+        "_Program home page._",
+        "",
+        "## Recent Notes",
+        "",
+        "## Related Topics",
+        ""
+      ].join("\n");
+      await this.app.vault.create(homePath, content);
+    }
+    return homePath;
+  }
+  async resolveDerivativeFolder(plan, category) {
+    if (plan.folder) {
+      await this.ensureFolderExists(plan.folder);
+      return plan.folder;
+    }
+    if (category.name.toLowerCase() === "programs" && plan.relatedPrograms.length > 0) {
+      const folder = `${this.resolveProgramsRoot()}/${this.sanitizeFileName(plan.relatedPrograms[0])}`;
+      await this.ensureFolderExists(folder);
+      return folder;
+    }
+    await this.ensureFolderExists(category.folderPath);
+    return category.folderPath;
+  }
+  resolveProgramsRoot() {
+    const configured = this.settings.categories.find((category) => category.name.toLowerCase() === "programs");
+    return configured?.folderPath || "Programs";
+  }
+  async archiveSourceNote(sourceFile) {
+    if (typeof this.app.fileManager.trashFile === "function") {
+      await this.app.fileManager.trashFile(sourceFile);
+      return `Source note moved using Obsidian archive/trash behavior.`;
+    }
+    const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
+    if (!archiveFolder) {
+      throw new Error("Archive Folder Path is empty.");
+    }
+    await this.ensureFolderExists(archiveFolder);
+    const archivePath = await this.getAvailableMarkdownPath(`${archiveFolder}/${this.sanitizeFileName(sourceFile.basename)}.md`);
+    await this.app.fileManager.renameFile(sourceFile, archivePath);
+    return `Source note archived to ${archivePath}.`;
+  }
+  async completeActionPlan(planFile, completedActionPlanPath) {
+    if (this.settings.archiveCompletedActionPlans) {
+      if (typeof this.app.fileManager.trashFile === "function") {
+        await this.app.fileManager.trashFile(planFile);
+        return "Action plan archived using Obsidian archive/trash behavior.";
+      }
+      const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
+      await this.ensureFolderExists(archiveFolder);
+      const archivePath = await this.getAvailableMarkdownPath(`${archiveFolder}/${this.sanitizeFileName(planFile.basename)}.md`);
+      await this.app.fileManager.renameFile(planFile, archivePath);
+      return `Action plan archived to ${archivePath}.`;
+    }
+    if (!completedActionPlanPath) {
+      throw new Error("Completed action plan path was not resolved.");
+    }
+    await this.ensureFolderExists(ACTION_PLANS_COMPLETED_FOLDER);
+    await this.app.fileManager.renameFile(planFile, completedActionPlanPath);
+    return `Action plan moved to ${completedActionPlanPath}.`;
   }
   getRelatedMarkdownNotes(currentFile) {
-    const excludedPaths = new Set(
-      [
-        this.settings.followUpTrackerPath,
-        this.settings.delegationTrackerPath,
-        this.settings.strategyTrackerPath,
-        this.settings.peopleCoachingTrackerPath,
-        this.settings.acronymListPath
-      ].map((path) => path.trim()).filter(Boolean)
-    );
-    return this.app.vault.getMarkdownFiles().filter((file) => file.path !== currentFile.path).filter((file) => !excludedPaths.has(file.path)).filter((file) => !this.isActionPlanPath(file.path)).filter((file) => !this.isAIContextFile(file.path)).filter((file) => !this.isTemporaryOrDailyArtifact(file)).map((file) => ({
-      title: file.basename,
-      path: file.path
-    })).sort((a, b) => `${a.path ?? a.title}`.localeCompare(`${b.path ?? b.title}`));
+    return this.app.vault.getMarkdownFiles().filter((file) => file.path !== currentFile.path).filter((file) => !this.isActionPlanPath(file.path)).filter((file) => !this.isAIContextFile(file.path)).filter((file) => !this.isAcronymFile(file.path)).filter((file) => !this.isTrackerFile(file.path)).filter((file) => !this.isTemporaryOrTimestampArtifact(file)).map((file) => ({ title: file.basename, path: file.path })).sort((a, b) => `${a.path}`.localeCompare(`${b.path}`));
   }
   async loadAIContext() {
     const folderPath = this.normalizeFolder(this.settings.aiContextFolderPath);
     const acronymPath = this.normalizeFilePath(this.settings.acronymListPath);
-    if (!folderPath) {
-      new import_obsidian.Notice("Onote: AI Context Folder Path is empty. Proceeding without AI context.", 5e3);
-      return await this.loadAcronymContextOnly(acronymPath);
-    }
+    const blocks = [];
     try {
-      const folder = this.app.vault.getAbstractFileByPath(folderPath);
-      if (!folder) {
-        await this.ensureFolderExists(folderPath);
-        await this.seedDefaultContextFiles(folderPath);
-      }
-      const contextFiles = this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${folderPath}/`)).sort((a, b) => a.path.localeCompare(b.path));
-      const blocks = [];
-      for (const file of contextFiles) {
-        const content = await this.app.vault.read(file);
-        blocks.push(`File: ${file.path}
+      if (folderPath) {
+        const folder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (!folder) {
+          await this.ensureFolderExists(folderPath);
+          await this.seedDefaultContextFiles(folderPath);
+        }
+        const contextFiles = this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${folderPath}/`)).sort((a, b) => a.path.localeCompare(b.path));
+        for (const file of contextFiles) {
+          const content = await this.app.vault.read(file);
+          blocks.push(`File: ${file.path}
 ${content.trim()}`);
+        }
+      } else {
+        new import_obsidian.Notice("Onote: AI Context Folder Path is empty. Proceeding without folder-based AI context.", 5e3);
       }
       if (acronymPath) {
         const acronymFile = await this.getOrCreateMarkdownFile(acronymPath, ACRONYM_FILE_HEADER);
-        const acronymContent = await this.app.vault.read(acronymFile);
+        const content = await this.app.vault.read(acronymFile);
         blocks.push(`File: ${acronymFile.path}
-${acronymContent.trim()}`);
+${content.trim()}`);
       }
-      if (blocks.length === 0) {
-        new import_obsidian.Notice("Onote: no AI context files found. Proceeding without AI context.", 5e3);
-        return "";
-      }
-      blocks.sort((a, b) => a.localeCompare(b));
-      return blocks.join("\n\n");
     } catch (error) {
       console.error("Onote AI context load failed", error);
-      new import_obsidian.Notice("Onote: could not load AI context files. Proceeding without AI context.", 6e3);
-      return "";
+      new import_obsidian.Notice("Onote: could not load one or more AI context files. Proceeding with available context.", 6e3);
     }
-  }
-  async loadAcronymContextOnly(acronymPath) {
-    if (!acronymPath) {
-      return "";
-    }
-    try {
-      const acronymFile = await this.getOrCreateMarkdownFile(acronymPath, ACRONYM_FILE_HEADER);
-      const content = await this.app.vault.read(acronymFile);
-      return `File: ${acronymFile.path}
-${content.trim()}`;
-    } catch (error) {
-      console.error("Onote acronym context load failed", error);
-      return "";
-    }
+    return blocks.sort((a, b) => a.localeCompare(b)).join("\n\n");
   }
   async seedDefaultContextFiles(folderPath) {
-    for (const file of DEFAULT_CONTEXT_FILES) {
+    const files = this.buildDefaultContextFiles();
+    for (const file of files) {
       const fullPath = `${folderPath}/${file.path}`;
       const existing = this.app.vault.getAbstractFileByPath(fullPath);
       if (!existing) {
@@ -355,17 +400,97 @@ ${content.trim()}`;
       }
     }
   }
+  buildDefaultContextFiles() {
+    const glossaryLines = ["# Program Glossary", ""];
+    for (const program of DEFAULT_PROGRAMS) {
+      glossaryLines.push(`## ${program.name}`);
+      glossaryLines.push(`Acronyms: ${program.acronyms.join(", ")}`);
+      glossaryLines.push("Type: Program");
+      glossaryLines.push("");
+    }
+    glossaryLines.push("Related: [[MEGALODON]]");
+    return [
+      {
+        path: "Program Glossary.md",
+        content: glossaryLines.join("\n")
+      },
+      {
+        path: "Organizational Vocabulary.md",
+        content: `# Organizational Vocabulary
+
+## ISG
+Meaning: Intelligence Solutions Group
+Type: Organization / portfolio
+
+## PMO
+Meaning: Government Program Management Office
+
+## PIPE
+Meaning: Increment planning event
+Rule: Do not rewrite PIPE as pipeline.
+`
+      },
+      {
+        path: "Processing Rules.md",
+        content: `# Processing Rules
+
+## Related Programs / Organizations
+- If a program, acronym, organization, or entity appears in the raw note, summary, derivative note title, derivative note summary, or extracted items, include it in Related Programs or Related Organizations.
+- Use canonical names from the Program Glossary.
+- Treat acronyms and full names as equivalent.
+- If ISG is mentioned, include ISG as a related organization/entity.
+
+## Suggested Links
+- Suggested links should be durable entity or concept notes.
+- Prefer links to programs, organizations, people, teams, processes, roles, risks, and strategic themes.
+- Do not suggest links to timestamped source notes, action-plan notes, tracker files, or temporary processing artifacts.
+- Do not suggest links whose title begins with "#".
+
+## Formatting and Link Rules
+- Suggested Links must be valid Obsidian wiki links in the form [[Note Name]].
+- Do not suggest links to AI context files, including [[Processing Rules]], [[Organizational Vocabulary]], [[Program Glossary]], [[Acronyms]], or any note under System/AI Context.
+- Preserve known acronyms exactly: PMO, PIPE, ISG, OBO, StS, DS, THR, MEG, MEG2.
+- Do not split acronyms into words. PMO should never become "PM O".
+- Preserve the difference between "remember" and "attend"; a reminder should stay a reminder unless the note explicitly says to attend.
+- Suggested Links should be durable topic/entity notes, not temporary processing artifacts.
+
+## Decisions
+- Only list a decision if the note clearly indicates that a choice has already been made.
+- Do not convert action items, questions, ideas, tentative thoughts, or coaching intentions into decisions.
+- Phrases like "maybe", "might", "still thinking", "seems", "could", "need to think", and "probably" usually indicate uncertainty, not decisions.
+
+## Action Items
+- Action items are specific things the user should do, ask, review, prepare, clarify, remember, or investigate.
+
+## Delegations
+- Delegations are only items the user assigned to another person.
+- Do not infer delegation merely because a person is mentioned.
+
+## Risks
+- If a note contains an uncertain dependency, missing date, incomplete plan, or unresolved ownership issue, consider whether it belongs in Risks.
+- Example: staffing plan coming but no real dates usually indicates risk.
+
+## Strategy Recommendations
+- Strategy recommendations are higher-level implications, organizational design ideas, program direction, recurring patterns, or possible future operating model changes.
+- Preserve uncertainty when the raw note is uncertain.
+
+## People / Coaching Notes
+- Only create people/coaching notes when the note refers to a specific person's performance, behavior, development, role fit, or coaching need.
+- Do not create generic coaching notes about communication unless tied to a specific person.
+`
+      }
+    ];
+  }
   async registerAcronymsFromNote(sourceFile, noteContent) {
     const acronymPath = this.normalizeFilePath(this.settings.acronymListPath);
     if (!acronymPath) {
       return;
     }
     const definitions = this.parseAcronymDefinitions(noteContent);
+    const acronymFile = await this.getOrCreateMarkdownFile(acronymPath, ACRONYM_FILE_HEADER);
     if (definitions.length === 0) {
-      await this.getOrCreateMarkdownFile(acronymPath, ACRONYM_FILE_HEADER);
       return;
     }
-    const acronymFile = await this.getOrCreateMarkdownFile(acronymPath, ACRONYM_FILE_HEADER);
     const existingContent = await this.app.vault.read(acronymFile);
     const existingEntries = this.readExistingAcronymEntries(existingContent);
     const existingConflicts = new Set(this.readExistingAcronymConflicts(existingContent));
@@ -376,9 +501,7 @@ ${content.trim()}`;
     for (const definition of definitions) {
       const current = existingEntries.get(definition.acronym);
       if (!current) {
-        newRows.push(
-          `| ${definition.acronym} | ${definition.fullName} | ${firstSeen} | [[${sourceLink}]] |`
-        );
+        newRows.push(`| ${definition.acronym} | ${definition.fullName} | ${firstSeen} | [[${sourceLink}]] |`);
         existingEntries.set(definition.acronym, definition.fullName);
         continue;
       }
@@ -393,12 +516,7 @@ ${content.trim()}`;
     if (newRows.length === 0 && newConflicts.length === 0) {
       return;
     }
-    const sections = [];
-    if (!existingContent.trim()) {
-      sections.push(ACRONYM_FILE_HEADER.trimEnd());
-    } else {
-      sections.push(existingContent.trimEnd());
-    }
+    const sections = [existingContent.trimEnd() || ACRONYM_FILE_HEADER.trimEnd()];
     if (newRows.length > 0) {
       sections.push("", ...newRows);
     }
@@ -412,8 +530,8 @@ ${content.trim()}`;
 `);
   }
   parseAcronymDefinitions(noteContent) {
-    const seen = /* @__PURE__ */ new Set();
     const results = [];
+    const seen = /* @__PURE__ */ new Set();
     const regex = /([A-Za-z0-9][A-Za-z0-9/&,\- ]*[A-Za-z0-9])\s+\(([A-Z][A-Z0-9]{1,})\)/g;
     let match;
     while ((match = regex.exec(noteContent)) !== null) {
@@ -433,8 +551,7 @@ ${content.trim()}`;
   }
   readExistingAcronymEntries(content) {
     const entries = /* @__PURE__ */ new Map();
-    const lines = content.split("\n");
-    for (const line of lines) {
+    for (const line of content.split("\n")) {
       const match = line.match(/^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$/);
       if (!match) {
         continue;
@@ -455,7 +572,7 @@ ${content.trim()}`;
     }
     return match[1].split("\n").map((line) => line.trim()).filter((line) => line.startsWith("- "));
   }
-  async callOpenAI(file, noteContent, programCandidates, relatedNotes, aiContext) {
+  async callOpenAI(file, noteContent, relatedNotes, aiContext) {
     const response = await (0, import_obsidian.requestUrl)({
       url: "https://api.openai.com/v1/chat/completions",
       method: "POST",
@@ -469,11 +586,11 @@ ${content.trim()}`;
         messages: [
           {
             role: "system",
-            content: "You turn raw notes into an editable execution plan. AI Context files are authoritative for acronym expansion, canonical names, and classification rules. Return only valid JSON."
+            content: "You turn raw timestamped source notes into editable action plans and derivative-note plans. AI context files are authoritative for classification rules. Program configuration is authoritative for program names and program acronyms. Return only valid JSON."
           },
           {
             role: "user",
-            content: this.buildPrompt(file, noteContent, programCandidates, relatedNotes, aiContext)
+            content: this.buildPrompt(file, noteContent, relatedNotes, aiContext)
           }
         ]
       })
@@ -485,56 +602,78 @@ ${content.trim()}`;
     if (typeof content !== "string" || !content.trim()) {
       throw new Error("OpenAI response did not include message content.");
     }
-    return this.normalizeActionPlan(this.parseJson(content), file.basename);
+    return this.normalizeActionPlan(this.parseJson(content));
   }
-  buildPrompt(file, noteContent, programCandidates, relatedNotes, aiContext) {
-    const programList = programCandidates.length > 0 ? programCandidates.join(", ") : "None provided";
+  buildPrompt(file, noteContent, relatedNotes, aiContext) {
+    const configuredPrograms = this.settings.programs.map((program) => `${program.name}${program.acronyms.length > 0 ? ` (${program.acronyms.join(", ")})` : ""}`).join(", ");
+    const configuredCategories = this.settings.categories.map((category) => `${category.name}: ${category.folderPath} - ${category.description}`).join("\n");
     const linkCandidates = relatedNotes.length > 0 ? relatedNotes.slice(0, 200).map((note) => `${note.title}${note.path ? ` (${note.path})` : ""}`).join(", ") : "None provided";
     return [
-      `You are processing an Obsidian note titled "${file.basename}".`,
+      `You are processing an Obsidian source note titled "${file.basename}".`,
       "",
       "Return exactly one JSON object with this shape:",
       "{",
       '  "summary": "string",',
-      '  "related_programs": ["string"],',
-      '  "related_organizations": ["string"],',
-      '  "decisions": ["string"],',
       '  "action_items": ["string"],',
       '  "delegations": ["string"],',
       '  "risks": ["string"],',
+      '  "decisions": ["string"],',
       '  "strategy_recommendations": ["string"],',
       '  "people_coaching_notes": ["string"],',
-      '  "suggested_tags": ["string"],',
       '  "suggested_links": [{"title": "string", "path": "optional string"}],',
-      '  "revised_note_title": "string",',
-      '  "revised_note_markdown": "string"',
+      '  "derivative_notes": [',
+      "    {",
+      '      "title": "string",',
+      '      "category": "string",',
+      '      "folder": "string",',
+      '      "related_programs": ["string"],',
+      '      "related_organizations": ["string"],',
+      '      "related_people": ["string"],',
+      '      "summary_markdown": "string",',
+      '      "tags": ["string"]',
+      "    }",
+      "  ]",
       "}",
       "",
       "Rules:",
       "- Return valid JSON only, with no markdown fences or prose outside the JSON object.",
       "- Use empty strings or arrays when information is missing.",
       "- Keep each array item concise and specific.",
-      "- AI Context files are authoritative for acronym expansion, canonical names, and classification rules.",
+      "- Source notes are timestamped notes, not daily notes.",
+      "- Action plans are review/edit gates before execution.",
+      "- Programs configuration is authoritative for program names and acronyms.",
       "- Acronyms.md is authoritative for acronym expansion unless it records a conflict.",
-      "- In revised_note_markdown, spell out each acronym on first use followed by the acronym in parentheses. After first use, use the acronym.",
+      "- In derivative note summaries, spell out each acronym on first use followed by the acronym in parentheses. After first use, use the acronym.",
       "- Preserve known acronyms exactly and do not split acronyms into words.",
       "- PMO must never become PM O.",
       "- PIPE must remain PIPE and must not be rewritten as pipeline.",
-      "- revised_note_markdown should be a cleaned, concise replacement note suitable to keep after the original is archived.",
-      "- Prefer related_programs and related_organizations that match these existing program notes when applicable:",
-      `  ${programList}`,
-      "- Prefer suggested_links that match these existing notes when applicable:",
-      `  ${linkCandidates}`,
       "- Suggested_links must be valid Obsidian wiki links in the form [[Note Name]].",
-      "- Suggested tags should be plain tag names without leading #.",
-      "- revised_note_title should be concise and appropriate as a markdown note title.",
+      "- Do not suggest links to AI context files, Acronyms.md, tracker files, action plans, timestamped source notes, or temporary processing artifacts.",
+      "- Suggested links should be durable topic/entity notes.",
+      "- Only list a decision if the note clearly indicates that a choice has already been made.",
+      "- Do not convert actions, questions, ideas, tentative thoughts, coaching topics, reminders, or follow-ups into decisions.",
+      "- Preserve uncertainty. Words like maybe, probably, might, need to think, not sure, and still thinking are not firm conclusions.",
+      "- Delegations are only items explicitly assigned by the user to another person.",
+      "- People/coaching notes only apply to a specific person's performance, behavior, development, role fit, or coaching need.",
       "- If the note contains an uncertain dependency, missing date, incomplete plan, or unresolved ownership issue, consider whether it belongs in risks.",
-      '- Example: "staffing plan coming but no real dates" should usually produce a risk.',
+      '- Example: "staffing plan coming but no real dates" usually indicates a risk.',
+      "- Create one derivative note per relevant category/topic rather than one final output note.",
+      "- Use configured categories for routing and propose a concrete folder for each derivative note. Never leave derivative notes at the vault root.",
+      "- For program derivative notes, prefer Programs/<Program Name>/ as the folder using the strongest related program.",
+      "",
+      "Configured Programs:",
+      configuredPrograms || "None configured",
+      "",
+      "Configured Categories:",
+      configuredCategories || "None configured",
+      "",
+      "Existing durable note candidates:",
+      linkCandidates,
       "",
       "AI Context:",
       aiContext || "(none)",
       "",
-      "Raw note:",
+      "Raw source note:",
       noteContent
     ].join("\n");
   }
@@ -543,25 +682,47 @@ ${content.trim()}`;
     const sanitized = trimmed.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
     return JSON.parse(sanitized);
   }
-  normalizeActionPlan(raw, fallbackTitle) {
+  normalizeActionPlan(raw) {
     const data = typeof raw === "object" && raw !== null ? raw : {};
     return {
       summary: this.asString(data.summary),
-      relatedPrograms: this.asStringArray(data.related_programs),
-      relatedOrganizations: this.asStringArray(data.related_organizations),
-      decisions: this.asStringArray(data.decisions),
       actionItems: this.asStringArray(data.action_items),
       delegations: this.asStringArray(data.delegations),
       risks: this.asStringArray(data.risks),
+      decisions: this.asStringArray(data.decisions),
       strategyRecommendations: this.asStringArray(data.strategy_recommendations),
       peopleCoachingNotes: this.asStringArray(data.people_coaching_notes),
-      suggestedTags: this.asStringArray(data.suggested_tags),
       suggestedLinks: this.asSuggestedLinks(data.suggested_links),
-      revisedNoteTitle: this.asString(data.revised_note_title) || `${fallbackTitle} - Summary`,
-      revisedNoteMarkdown: this.asString(data.revised_note_markdown) || `# ${fallbackTitle}
-
-_No revised note draft generated._`
+      derivativeNotes: this.asDerivativeNotes(data.derivative_notes)
     };
+  }
+  asDerivativeNotes(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map((item) => {
+      if (typeof item !== "object" || item === null) {
+        return null;
+      }
+      const record = item;
+      const title = this.asString(record.title);
+      const category = this.asString(record.category);
+      const folder = this.asString(record.folder);
+      const summaryMarkdown = this.asString(record.summary_markdown);
+      if (!title || !category) {
+        return null;
+      }
+      return this.normalizeDerivativeNotePlan({
+        title,
+        category,
+        folder,
+        relatedPrograms: this.asStringArray(record.related_programs),
+        relatedOrganizations: this.asStringArray(record.related_organizations),
+        relatedPeople: this.asStringArray(record.related_people),
+        summaryMarkdown,
+        tags: this.asStringArray(record.tags)
+      });
+    }).filter((item) => item !== null);
   }
   asString(value) {
     return typeof value === "string" ? value.trim() : "";
@@ -590,24 +751,25 @@ _No revised note draft generated._`
     }).filter((item) => item !== null).filter((item) => !item.title.startsWith("#")).filter((item) => !this.isSuggestedLinkArtifact(item));
   }
   async createActionPlanNote(sourceFile, actionPlan) {
-    const planPath = await this.getAvailableMarkdownPath(
-      this.buildSiblingPath(sourceFile, `${sourceFile.basename} - Action Plan`)
-    );
+    await this.ensureFolderExists(ACTION_PLANS_FOLDER);
+    const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
+    const baseTitle = `${timestampPrefix} - ${this.stripTimestampPrefix(sourceFile.basename)} - Action Plan`;
+    const planPath = await this.getAvailableMarkdownPath(`${ACTION_PLANS_FOLDER}/${this.sanitizeFileName(baseTitle)}.md`);
     const content = this.buildActionPlanNoteContent(sourceFile, actionPlan);
     return this.app.vault.create(planPath, content);
   }
   buildActionPlanNoteContent(sourceFile, actionPlan) {
-    const timestamp = window.moment().format("YYYY-MM-DD HH:mm");
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
     return [
       "---",
       'onote_type: "action_plan"',
       `source_note_path: "${this.escapeYamlString(sourceFile.path)}"`,
-      `generated_at: "${this.escapeYamlString((/* @__PURE__ */ new Date()).toISOString())}"`,
+      `generated_at: "${this.escapeYamlString(timestamp)}"`,
       "---",
       "",
       `# AI Action Plan: ${sourceFile.basename}`,
       "",
-      `Generated ${timestamp}. Review and edit this note, then run \`Execute Current Action Plan\` while it is open.`,
+      "Review and edit this action plan, then run `Execute Current Action Plan` while it is open.",
       "",
       "## Commands",
       "",
@@ -616,63 +778,104 @@ _No revised note draft generated._`
       "```",
       "",
       this.formatTextSection("Summary", actionPlan.summary || "_No summary generated._"),
-      this.formatTextSection("Revised Note Title", actionPlan.revisedNoteTitle),
       this.formatListSection("Recommended Action Items", actionPlan.actionItems),
       this.formatListSection("Delegations", actionPlan.delegations),
-      this.formatListSection("Strategy Recommendations", actionPlan.strategyRecommendations),
-      this.formatListSection("Decisions", actionPlan.decisions),
       this.formatListSection("Risks", actionPlan.risks),
+      this.formatListSection("Decisions", actionPlan.decisions),
+      this.formatListSection("Strategy Recommendations", actionPlan.strategyRecommendations),
       this.formatListSection("People / Coaching Notes", actionPlan.peopleCoachingNotes),
-      this.formatListSection(
-        "Related Programs",
-        actionPlan.relatedPrograms.map((item) => this.renderDurableEntityLink(item))
-      ),
-      this.formatListSection(
-        "Related Organizations",
-        actionPlan.relatedOrganizations.map((item) => this.renderDurableEntityLink(item))
-      ),
-      this.formatListSection(
-        "Suggested Tags",
-        actionPlan.suggestedTags.map((tag) => `#${tag.replace(/^#/, "")}`)
-      ),
       this.formatListSection(
         "Suggested Links",
         actionPlan.suggestedLinks.map((link) => this.formatSuggestedLink(link)).filter(Boolean)
       ),
-      "## Revised Note Draft",
+      "## Proposed Derivative Notes",
       "",
-      "Edit the content between the markers below. This draft becomes the kept note when you execute the plan.",
+      "Edit the derivative note plans below. Execution will parse these blocks and create one derivative note per entry.",
       "",
       REVISED_NOTE_START,
-      actionPlan.revisedNoteMarkdown.trim() || "_No revised note draft generated._",
+      ...this.formatDerivativeNoteBlocks(actionPlan.derivativeNotes),
       REVISED_NOTE_END,
       ""
     ].join("\n");
   }
+  formatDerivativeNoteBlocks(derivativeNotes) {
+    if (derivativeNotes.length === 0) {
+      return [
+        "### Derivative Note 1",
+        "Title: Untitled Derivative",
+        "Category: Scratchpad",
+        "Folder: Scratchpad",
+        "Related Programs: ",
+        "Related Organizations: ",
+        "Related People: ",
+        "Tags: ",
+        "Summary:",
+        "_Add derivative note summary markdown here._"
+      ];
+    }
+    return derivativeNotes.flatMap((note, index) => [
+      `### Derivative Note ${index + 1}`,
+      `Title: ${note.title}`,
+      `Category: ${note.category}`,
+      `Folder: ${note.folder || this.resolveDefaultFolderForDerivative(note)}`,
+      `Related Programs: ${note.relatedPrograms.map((item) => this.renderDurableEntityLink(item)).join(", ")}`,
+      `Related Organizations: ${note.relatedOrganizations.map((item) => this.renderDurableEntityLink(item)).join(", ")}`,
+      `Related People: ${note.relatedPeople.map((item) => this.renderDurableEntityLink(item)).join(", ")}`,
+      `Tags: ${note.tags.map((tag) => `#${tag.replace(/^#/, "")}`).join(", ")}`,
+      "Summary:",
+      note.summaryMarkdown || "_Add derivative note summary markdown here._",
+      ""
+    ]);
+  }
   parseActionPlanNote(content) {
     const sourceNotePath = this.readFrontmatterValue(content, "source_note_path");
-    const revisedNoteMarkdown = this.extractBetween(content, REVISED_NOTE_START, REVISED_NOTE_END).trim();
-    const contentBeforeDraft = content.split(REVISED_NOTE_START)[0];
+    const derivativeBlock = this.extractBetween(content, REVISED_NOTE_START, REVISED_NOTE_END).trim();
+    const contentBeforeDerivatives = content.split(REVISED_NOTE_START)[0];
     return {
       sourceNotePath,
-      revisedNoteTitle: this.extractSectionText(contentBeforeDraft, "Revised Note Title") || "Approved Summary",
-      summary: this.extractSectionText(contentBeforeDraft, "Summary"),
-      actionItems: this.extractSectionList(contentBeforeDraft, "Recommended Action Items"),
-      delegations: this.extractSectionList(contentBeforeDraft, "Delegations"),
-      strategyRecommendations: this.extractSectionList(contentBeforeDraft, "Strategy Recommendations"),
-      decisions: this.extractSectionList(contentBeforeDraft, "Decisions"),
-      risks: this.extractSectionList(contentBeforeDraft, "Risks"),
-      peopleCoachingNotes: this.extractSectionList(contentBeforeDraft, "People / Coaching Notes"),
-      relatedPrograms: this.extractSectionList(contentBeforeDraft, "Related Programs"),
-      relatedOrganizations: this.extractSectionList(contentBeforeDraft, "Related Organizations"),
-      suggestedTags: this.extractSectionList(contentBeforeDraft, "Suggested Tags").map(
-        (tag) => tag.replace(/^#/, "").trim()
-      ),
-      suggestedLinks: this.extractSectionList(contentBeforeDraft, "Suggested Links").filter(
-        (link) => !link.startsWith("#")
-      ),
-      revisedNoteMarkdown
+      summary: this.extractSectionText(contentBeforeDerivatives, "Summary"),
+      actionItems: this.extractSectionList(contentBeforeDerivatives, "Recommended Action Items"),
+      delegations: this.extractSectionList(contentBeforeDerivatives, "Delegations"),
+      risks: this.extractSectionList(contentBeforeDerivatives, "Risks"),
+      decisions: this.extractSectionList(contentBeforeDerivatives, "Decisions"),
+      strategyRecommendations: this.extractSectionList(contentBeforeDerivatives, "Strategy Recommendations"),
+      peopleCoachingNotes: this.extractSectionList(contentBeforeDerivatives, "People / Coaching Notes"),
+      suggestedLinks: this.extractSectionList(contentBeforeDerivatives, "Suggested Links"),
+      derivativeNotes: this.parseDerivativeNotesBlock(derivativeBlock)
     };
+  }
+  parseDerivativeNotesBlock(block) {
+    if (!block) {
+      return [];
+    }
+    return block.split(/^### Derivative Note \d+\s*$/m).map((chunk) => chunk.trim()).filter(Boolean).map((chunk) => this.parseSingleDerivativeBlock(chunk)).filter((item) => item !== null);
+  }
+  parseSingleDerivativeBlock(chunk) {
+    const lines = chunk.split("\n");
+    const getField = (name) => {
+      const line = lines.find((entry) => entry.startsWith(`${name}:`));
+      return line ? line.slice(name.length + 1).trim() : "";
+    };
+    const summaryIndex = lines.findIndex((entry) => entry.trim() === "Summary:");
+    const summaryMarkdown = summaryIndex >= 0 ? lines.slice(summaryIndex + 1).join("\n").trim() : "";
+    const title = getField("Title");
+    const category = getField("Category");
+    if (!title || !category) {
+      return null;
+    }
+    return this.normalizeDerivativeNotePlan({
+      title,
+      category,
+      folder: getField("Folder"),
+      relatedPrograms: this.parseCommaSeparatedField(getField("Related Programs")),
+      relatedOrganizations: this.parseCommaSeparatedField(getField("Related Organizations")),
+      relatedPeople: this.parseCommaSeparatedField(getField("Related People")),
+      summaryMarkdown,
+      tags: this.parseCommaSeparatedField(getField("Tags")).map((tag) => tag.replace(/^#/, ""))
+    });
+  }
+  parseCommaSeparatedField(value) {
+    return value.split(",").map((entry) => this.extractWikiLinkTitle(entry.trim())).map((entry) => entry.replace(/^#/, "").trim()).filter(Boolean);
   }
   readFrontmatterValue(content, key) {
     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
@@ -692,9 +895,7 @@ _No revised note draft generated._`
     return body.split("\n").map((line) => line.trim()).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim()).filter(Boolean);
   }
   extractSectionBody(content, title) {
-    const pattern = new RegExp(
-      `## ${this.escapeRegex(title)}\\n([\\s\\S]*?)(?=\\n## |\\n${this.escapeRegex(REVISED_NOTE_START)}|$)`
-    );
+    const pattern = new RegExp(`## ${this.escapeRegex(title)}\\n([\\s\\S]*?)(?=\\n## |\\n${this.escapeRegex(REVISED_NOTE_START)}|$)`);
     const match = content.match(pattern);
     return match?.[1]?.trim() ?? "";
   }
@@ -706,99 +907,87 @@ _No revised note draft generated._`
     }
     return content.slice(startIndex + startMarker.length, endIndex).trim();
   }
-  buildRevisedNoteContent(sourceFile, plan) {
-    const sections = [
-      plan.revisedNoteMarkdown.trim(),
-      [
-        "## Commands",
-        "",
-        "```meta-bind-button",
-        this.buildMetaBindButton("Process Current Note with AI", PROCESS_CURRENT_NOTE_COMMAND),
-        "```"
-      ].join("\n")
-    ];
-    if (plan.summary) {
-      sections.push(this.formatTextSection("AI Approved Summary", plan.summary));
+  buildDerivativeNoteContent(plan, sourceFile, actionPlanPath) {
+    const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+    const sourceLink = `[[${this.app.metadataCache.fileToLinktext(sourceFile, "", true)}]]`;
+    const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
+    return [
+      "---",
+      "onote_type: derivative_note",
+      `category: "${this.escapeYamlString(plan.category)}"`,
+      `source_note_path: "${this.escapeYamlString(sourceFile.path)}"`,
+      `action_plan_path: "${this.escapeYamlString(actionPlanPath)}"`,
+      `created_at: "${createdAt}"`,
+      this.yamlArray("programs", plan.relatedPrograms),
+      this.yamlArray("organizations", plan.relatedOrganizations),
+      this.yamlArray("people", plan.relatedPeople),
+      this.yamlArray("tags", plan.tags.map((tag) => `#${tag.replace(/^#/, "")}`)),
+      "---",
+      "",
+      `# ${plan.title}`,
+      "",
+      "## Commands",
+      "",
+      "```meta-bind-button",
+      this.buildMetaBindButton("Process Current Note with AI", PROCESS_CURRENT_NOTE_COMMAND),
+      "```",
+      "",
+      plan.summaryMarkdown || "_No derivative summary provided._",
+      "",
+      this.formatListSection("Related Programs", plan.relatedPrograms.map((item) => this.renderDurableEntityLink(item))),
+      this.formatListSection("Related Organizations", plan.relatedOrganizations.map((item) => this.renderDurableEntityLink(item))),
+      this.formatListSection("Related People", plan.relatedPeople.map((item) => this.renderDurableEntityLink(item))),
+      this.formatListSection("Tags", plan.tags.map((tag) => `#${tag.replace(/^#/, "")}`)),
+      "## Source Links",
+      "",
+      `- Source Note: ${sourceLink}`,
+      `- Action Plan: ${actionPlanLink}`,
+      ""
+    ].join("\n");
+  }
+  yamlArray(key, values) {
+    if (values.length === 0) {
+      return `${key}: []`;
     }
-    if (plan.decisions.length > 0) {
-      sections.push(this.formatListSection("Decisions", plan.decisions));
-    }
-    if (plan.relatedPrograms.length > 0) {
-      sections.push(
-        this.formatListSection(
-          "Related Programs",
-          plan.relatedPrograms.map((item) => this.renderDurableEntityLink(item))
-        )
-      );
-    }
-    if (plan.relatedOrganizations.length > 0) {
-      sections.push(
-        this.formatListSection(
-          "Related Organizations",
-          plan.relatedOrganizations.map((item) => this.renderDurableEntityLink(item))
-        )
-      );
-    }
-    if (plan.suggestedLinks.length > 0) {
-      sections.push(
-        this.formatListSection(
-          "Suggested Links",
-          plan.suggestedLinks.filter((link) => !link.startsWith("#")).map((link) => this.renderDurableEntityLink(link)).filter(Boolean)
-        )
-      );
-    }
-    if (plan.suggestedTags.length > 0) {
-      sections.push(
-        this.formatListSection(
-          "Suggested Tags",
-          plan.suggestedTags.map((tag) => `#${tag.replace(/^#/, "")}`)
-        )
-      );
-    }
-    sections.push(
-      this.formatTextSection(
-        "Source",
-        `Derived from "${sourceFile.path}" via an approved Onote action plan.`
-      )
-    );
-    return `${sections.join("\n\n").trim()}
-`;
+    return [`${key}:`, ...values.map((value) => `  - "${this.escapeYamlString(value)}"`)].join("\n");
   }
   async appendItemsToTracker(trackerPath, title, sourceFile, items) {
-    const normalizedPath = trackerPath.trim();
-    if (!normalizedPath) {
+    const normalizedPath = this.normalizeFilePath(trackerPath);
+    if (!normalizedPath || items.length === 0) {
       return;
     }
     const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `# ${title}
 `);
-    if (items.length === 0) {
-      return;
-    }
     const timestamp = window.moment().format("YYYY-MM-DD");
     const sourceLink = this.app.metadataCache.fileToLinktext(sourceFile, normalizedPath, true);
-    const block = [
-      "",
-      `## ${timestamp} - [[${sourceLink}]]`,
-      ...items.map((item) => `- ${item}`),
-      ""
-    ].join("\n");
+    const block = ["", `## ${timestamp} - [[${sourceLink}]]`, ...items.map((item) => `- ${item}`), ""].join("\n");
     await this.app.vault.append(trackerFile, block);
   }
-  async archivePlanFiles(sourceFile, planFile) {
-    const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
-    if (!archiveFolder) {
-      throw new Error("Archive Folder Path is empty.");
+  async appendLinkUnderSection(filePath, sectionTitle, link) {
+    const file = await this.getOrCreateMarkdownFile(filePath, `# ${this.stripFileExtension(this.basenameFromPath(filePath))}
+`);
+    const content = await this.app.vault.read(file);
+    if (content.includes(link)) {
+      return;
     }
-    await this.ensureFolderExists(archiveFolder);
-    const originalArchivePath = await this.getAvailableMarkdownPath(
-      `${archiveFolder}/${this.sanitizeFileName(sourceFile.basename)}.md`
-    );
-    const planArchivePath = await this.getAvailableMarkdownPath(
-      `${archiveFolder}/${this.sanitizeFileName(planFile.basename)}.md`
-    );
-    await this.app.fileManager.renameFile(sourceFile, originalArchivePath);
-    await this.app.fileManager.renameFile(planFile, planArchivePath);
-    return [originalArchivePath, planArchivePath];
+    const pattern = new RegExp(`## ${this.escapeRegex(sectionTitle)}\\n`);
+    if (!pattern.test(content)) {
+      const updated2 = `${content.trimEnd()}
+
+## ${sectionTitle}
+
+- ${link}
+`;
+      await this.app.vault.modify(file, updated2);
+      return;
+    }
+    const updated = content.replace(pattern, `## ${sectionTitle}
+
+- ${link}
+`);
+    if (updated !== content) {
+      await this.app.vault.modify(file, updated);
+    }
   }
   async getOrCreateMarkdownFile(path, initialContent) {
     const existing = this.app.vault.getAbstractFileByPath(path);
@@ -834,33 +1023,19 @@ _No revised note draft generated._`
     }
     return `${basePath} ${counter}.md`;
   }
-  buildSiblingPath(sourceFile, noteTitle) {
-    const cleanTitle = this.sanitizeFileName(noteTitle) || `${sourceFile.basename} - Summary`;
-    const folder = sourceFile.parent?.path;
-    return folder ? `${folder}/${cleanTitle}.md` : `${cleanTitle}.md`;
-  }
-  sanitizeFileName(name) {
-    return name.trim().replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
-  }
   formatTextSection(title, text) {
     return `## ${title}
 
 ${text || "_None_"}`;
   }
-  buildMetaBindButton(label, commandId) {
-    return [
-      `label: ${label}`,
-      "style: primary",
-      "action:",
-      "  type: command",
-      `  command: ${commandId}`
-    ].join("\n");
-  }
   formatListSection(title, items) {
-    const body = items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- None";
+    const body = items.length > 0 ? items.filter(Boolean).map((item) => `- ${item}`).join("\n") : "- None";
     return `## ${title}
 
 ${body}`;
+  }
+  buildMetaBindButton(label, commandId) {
+    return [`label: ${label}`, "style: primary", "action:", "  type: command", `  command: ${commandId}`].join("\n");
   }
   formatSuggestedLink(link) {
     if (!link.title || link.title.startsWith("#") || this.isSuggestedLinkArtifact(link)) {
@@ -872,61 +1047,64 @@ ${body}`;
     const resolvedPath = link.path?.trim();
     if (resolvedPath) {
       const maybeFile = this.app.vault.getAbstractFileByPath(resolvedPath);
-      if (maybeFile instanceof import_obsidian.TFile && !this.isTemporaryOrDailyArtifact(maybeFile) && !this.isAIContextFile(maybeFile.path)) {
-        const linkText = this.app.metadataCache.fileToLinktext(maybeFile, "", true);
-        return `[[${linkText}]]`;
+      if (maybeFile instanceof import_obsidian.TFile && !this.isTemporaryOrTimestampArtifact(maybeFile) && !this.isAIContextFile(maybeFile.path)) {
+        return `[[${this.app.metadataCache.fileToLinktext(maybeFile, "", true)}]]`;
       }
-    }
-    const match = this.app.metadataCache.getFirstLinkpathDest(link.title, "");
-    if (match && !this.isTemporaryOrDailyArtifact(match) && !this.isAIContextFile(match.path)) {
-      const linkText = this.app.metadataCache.fileToLinktext(match, "", true);
-      return `[[${linkText}]]`;
     }
     return this.renderDurableEntityLink(link.title);
   }
   isSuggestedLinkArtifact(link) {
     const title = this.extractWikiLinkTitle(link.title).toLowerCase();
+    const path = link.path?.toLowerCase() ?? "";
     if (title.startsWith("#")) {
       return true;
     }
-    const path = link.path?.toLowerCase() ?? "";
-    if (path === this.normalizeFilePath(this.settings.acronymListPath).toLowerCase()) {
+    if (this.isAIContextFile(path) || this.isAcronymFile(path) || this.isTrackerFile(path) || this.isActionPlanPath(path)) {
       return true;
     }
-    if (path && this.isAIContextFile(path)) {
-      return true;
-    }
-    return [
-      "follow-up",
-      "follow up",
-      "delegation",
-      "strategy theme",
-      "people - coaching",
-      "action plan",
-      "processed summary",
-      "tmp",
-      "temp",
-      "scratch",
-      "acronyms"
-    ].some((marker) => title.includes(marker) || path.includes(marker));
+    return ["timestamped note", "source note", "action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft", "acronyms"].some(
+      (marker) => title.includes(marker) || path.includes(marker)
+    );
   }
   renderDurableEntityLink(value) {
-    const trimmed = value.trim();
-    if (!trimmed) {
+    const trimmed = this.extractWikiLinkTitle(value.trim());
+    if (!trimmed || trimmed.startsWith("#")) {
       return "";
     }
-    if (this.isWikiLink(trimmed)) {
-      return trimmed;
-    }
-    if (trimmed.startsWith("#")) {
-      return "";
+    if (this.isWikiLink(value.trim())) {
+      return value.trim();
     }
     const match = this.app.metadataCache.getFirstLinkpathDest(trimmed, "");
-    if (match && !this.isTemporaryOrDailyArtifact(match) && !this.isAIContextFile(match.path)) {
-      const linkText = this.app.metadataCache.fileToLinktext(match, "", true);
-      return `[[${linkText}]]`;
+    if (match && !this.isTemporaryOrTimestampArtifact(match) && !this.isAIContextFile(match.path)) {
+      return `[[${this.app.metadataCache.fileToLinktext(match, "", true)}]]`;
     }
     return `[[${trimmed}]]`;
+  }
+  normalizeProgramList(values) {
+    const map = this.buildProgramLookup();
+    return this.asStringArray(values).map((value) => this.extractWikiLinkTitle(value)).map((value) => map.get(value.toLowerCase()) ?? value).filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
+  }
+  buildProgramLookup() {
+    const lookup = /* @__PURE__ */ new Map();
+    for (const program of this.settings.programs) {
+      lookup.set(program.name.toLowerCase(), program.name);
+      for (const acronym of program.acronyms) {
+        lookup.set(acronym.toLowerCase(), program.name);
+      }
+    }
+    return lookup;
+  }
+  normalizeCategoryName(value) {
+    const trimmed = this.asString(value);
+    const configured = this.settings.categories.find((category) => category.name.toLowerCase() === trimmed.toLowerCase());
+    return configured?.name || trimmed || "Scratchpad";
+  }
+  resolveDefaultFolderForDerivative(note) {
+    const category = this.settings.categories.find((entry) => entry.name.toLowerCase() === note.category.toLowerCase());
+    if (note.category.toLowerCase() === "programs" && note.relatedPrograms.length > 0) {
+      return `${this.resolveProgramsRoot()}/${this.sanitizeFileName(note.relatedPrograms[0])}`;
+    }
+    return category?.folderPath || this.sanitizeFileName(note.category);
   }
   isWikiLink(value) {
     return /^\[\[[^\]]+\]\]$/.test(value.trim());
@@ -956,35 +1134,59 @@ ${body}`;
   isAIContextFile(path) {
     const normalizedPath = this.normalizeFilePath(path);
     const contextFolder = this.normalizeFolder(this.settings.aiContextFolderPath);
-    const acronymPath = this.normalizeFilePath(this.settings.acronymListPath);
-    if (normalizedPath === acronymPath) {
-      return true;
-    }
-    return contextFolder ? normalizedPath.startsWith(`${contextFolder}/`) : false;
+    return !!normalizedPath && !!contextFolder && normalizedPath.startsWith(`${contextFolder}/`);
   }
-  isTemporaryOrDailyArtifact(file) {
-    const path = file.path.toLowerCase();
-    const basename = file.name.replace(/\.md$/i, "").toLowerCase();
-    if (this.isLikelyDailyNote(file.name.replace(/\.md$/i, ""))) {
-      return true;
-    }
+  isAcronymFile(path) {
+    return this.normalizeFilePath(path).toLowerCase() === this.normalizeFilePath(this.settings.acronymListPath).toLowerCase();
+  }
+  isTrackerFile(path) {
+    const normalized = this.normalizeFilePath(path).toLowerCase();
     return [
-      "follow-up",
-      "follow up",
-      "delegation",
-      "strategy theme",
-      "people - coaching",
-      "people/coaching",
-      "processed summary",
-      "action plan",
-      "tmp",
-      "temp",
-      "scratch",
-      "draft"
-    ].some((marker) => basename.includes(marker) || path.includes(marker));
+      this.settings.followUpTrackerPath,
+      this.settings.delegationTrackerPath,
+      this.settings.strategyTrackerPath,
+      this.settings.peopleCoachingTrackerPath
+    ].map((entry) => this.normalizeFilePath(entry).toLowerCase()).includes(normalized);
   }
-  isLikelyDailyNote(name) {
-    return /^\d{4}-\d{2}-\d{2}$/.test(name) || /^\d{4}\.\d{2}\.\d{2}$/.test(name) || /^\d{4}_\d{2}_\d{2}$/.test(name) || /^[a-z]+ \d{1,2}, \d{4}$/i.test(name);
+  isTemporaryOrTimestampArtifact(file) {
+    const path = file.path.toLowerCase();
+    const basename = file.name.replace(/\.md$/i, "");
+    if (this.looksTimestampedName(basename)) {
+      return true;
+    }
+    return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+      (marker) => path.includes(marker)
+    );
+  }
+  looksTimestampedName(name) {
+    return /^\d{4}-\d{2}-\d{2} \d{4} /.test(name);
+  }
+  getSourceTimestampPrefix(sourceFile) {
+    const match = sourceFile.basename.match(/^(\d{4}-\d{2}-\d{2} \d{4})/);
+    return match?.[1] || window.moment().format("YYYY-MM-DD HHmm");
+  }
+  stripTimestampPrefix(name) {
+    return name.replace(/^\d{4}-\d{2}-\d{2} \d{4}\s*-\s*/, "").trim();
+  }
+  ensureTimestampedTitle(timestampPrefix, title) {
+    const cleanTitle = this.sanitizeFileName(title);
+    return cleanTitle.startsWith(timestampPrefix) ? cleanTitle : `${timestampPrefix} - ${cleanTitle}`;
+  }
+  sanitizeFileName(name) {
+    return name.trim().replace(/[\\/:*?"<>|]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  basenameFromPath(path) {
+    return path.split("/").pop() ?? path;
+  }
+  stripFileExtension(name) {
+    return name.replace(/\.md$/i, "");
+  }
+  linkTextForPath(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof import_obsidian.TFile) {
+      return this.app.metadataCache.fileToLinktext(file, "", true);
+    }
+    return this.stripFileExtension(this.basenameFromPath(path));
   }
 };
 var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {
@@ -996,7 +1198,7 @@ var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "Onote Settings" });
-    new import_obsidian.Setting(containerEl).setName("OpenAI API key").setDesc("Used to generate action plans and revised notes from the current note.").addText((text) => {
+    new import_obsidian.Setting(containerEl).setName("OpenAI API key").setDesc("Used to generate action plans and derivative notes from the current source note.").addText((text) => {
       text.inputEl.type = "password";
       return text.setPlaceholder("sk-...").setValue(this.plugin.settings.apiKey).onChange(async (value) => {
         this.plugin.settings.apiKey = value.trim();
@@ -1004,7 +1206,7 @@ var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {
       });
     });
     new import_obsidian.Setting(containerEl).setName("Model name").setDesc("Chat Completions model to use.").addText(
-      (text) => text.setPlaceholder("gpt-4.1-mini").setValue(this.plugin.settings.model).onChange(async (value) => {
+      (text) => text.setPlaceholder(DEFAULT_SETTINGS.model).setValue(this.plugin.settings.model).onChange(async (value) => {
         this.plugin.settings.model = value.trim() || DEFAULT_SETTINGS.model;
         await this.plugin.saveSettings();
       })
@@ -1014,16 +1216,43 @@ var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {
     this.addPathSetting(containerEl, "Strategy tracker path", "strategyTrackerPath");
     this.addPathSetting(containerEl, "People / coaching tracker path", "peopleCoachingTrackerPath");
     this.addPathSetting(containerEl, "Acronym List Path", "acronymListPath");
-    this.addPathSetting(containerEl, "Program notes folder", "programNotesFolder");
     this.addPathSetting(containerEl, "AI Context Folder Path", "aiContextFolderPath");
     this.addPathSetting(containerEl, "Archive Folder Path", "archiveFolderPath");
+    new import_obsidian.Setting(containerEl).setName("Archive completed action plans").setDesc("If enabled, completed action plans use Obsidian archive/trash behavior instead of moving to Action Plans/Completed.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.archiveCompletedActionPlans).onChange(async (value) => {
+        this.plugin.settings.archiveCompletedActionPlans = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    this.addJsonSetting(containerEl, "Programs", "Authoritative program names and acronyms used for routing and prompt injection.", "programs");
+    this.addJsonSetting(containerEl, "Categories", "Configurable note categories used for derivative note routing and home page generation.", "categories");
   }
   addPathSetting(containerEl, label, key) {
-    new import_obsidian.Setting(containerEl).setName(label).setDesc("Markdown path or folder path inside the vault. Missing folders/files will be created when needed.").addText(
+    new import_obsidian.Setting(containerEl).setName(label).setDesc("Vault-relative path. Missing folders/files are created when needed.").addText(
       (text) => text.setPlaceholder(DEFAULT_SETTINGS[key]).setValue(this.plugin.settings[key]).onChange(async (value) => {
         this.plugin.settings[key] = value.trim() || DEFAULT_SETTINGS[key];
         await this.plugin.saveSettings();
       })
     );
+  }
+  addJsonSetting(containerEl, label, description, key) {
+    new import_obsidian.Setting(containerEl).setName(label).setDesc(description).addTextArea((text) => {
+      text.inputEl.rows = 12;
+      text.setValue(JSON.stringify(this.plugin.settings[key], null, 2));
+      text.onChange(async (value) => {
+        try {
+          const parsed = JSON.parse(value);
+          if (key === "programs") {
+            this.plugin.settings.programs = this.plugin["normalizePrograms"](parsed);
+          } else {
+            this.plugin.settings.categories = this.plugin["normalizeCategories"](parsed);
+          }
+          await this.plugin.saveSettings();
+        } catch {
+          new import_obsidian.Notice(`Onote: invalid JSON in ${label} setting. Changes not saved.`, 5e3);
+        }
+      });
+      return text;
+    });
   }
 };

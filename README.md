@@ -1,19 +1,40 @@
 # Onote
 
-Onote is an Obsidian community plugin for turning rough notes into a reviewable action plan and then executing that plan into durable notes and trackers.
+Onote is an Obsidian community plugin for turning a timestamped source note into a reviewable action plan and then executing that plan into multiple durable derivative notes plus tracker updates.
 
-It is designed for operating notes, leadership notes, meeting notes, program notes, and similar working material where the raw note should be preserved through review before the cleaned outputs are finalized.
+It is built for operating notes, leadership notes, meeting notes, strategy notes, coaching notes, and program notes where one source note often contains several distinct topics that should live in different places.
 
 ## What It Does
 
-Onote uses the OpenAI API to process the current Obsidian note into structured output, with vault-specific context loaded from Markdown files instead of hardcoded prompt rules.
+Onote uses the OpenAI API to process the current source note into structured output, with vault-specific context loaded from Markdown files instead of hardcoded prompt rules.
 
 The plugin follows a two-step workflow:
 
-1. Generate an editable action-plan note from the current raw note.
-2. After review, execute the action plan to create the revised note and update tracker files.
+1. Generate an editable action-plan note from the current source note.
+2. After review, execute the action plan to create one derivative note per relevant category/topic and update the trackers.
 
-During execution, the original raw note and the action-plan note are archived instead of deleted.
+During execution:
+
+- the original source note is archived using Obsidian archive/trash behavior when available
+- the completed action plan is moved to `Action Plans/Completed` by default
+- no single root-level final note is created
+
+## Source Notes
+
+Onote uses the term `Source Note` or `Timestamped Note`.
+
+Recommended naming:
+
+```text
+YYYY-MM-DD HHmm - Note Title.md
+```
+
+Examples:
+
+```text
+2026-04-26 1254 - Roadmap Release Process.md
+2026-04-26 1254 - PM Ownership Coaching.md
+```
 
 ## How It Works
 
@@ -21,42 +42,54 @@ During execution, the original raw note and the action-plan note are archived in
 
 When you run `Process Current Note with AI`, Onote:
 
-- reads the active Markdown note
+- reads the active source note
 - registers acronym definitions found in the note into `Acronyms.md`
 - loads AI context from the configured AI context folder
-- loads `Acronyms.md` as part of the AI context
-- sends the raw note plus context to OpenAI
-- creates a new `... - Action Plan` note for review
+- loads `Acronyms.md` as part of the same prompt context
+- injects configured programs and categories into the AI prompt
+- sends the source note plus context to OpenAI
+- creates an editable action-plan note in `Action Plans/`
 
 The action-plan note includes:
 
 - summary
-- revised note title
 - recommended action items
 - delegations
-- strategy recommendations
-- decisions
 - risks
+- decisions
+- strategy recommendations
 - people / coaching notes
+- suggested links
+- proposed derivative notes
+
+Each proposed derivative note includes:
+
+- title
+- category
+- folder
 - related programs
 - related organizations
-- suggested tags
-- suggested links
-- revised note draft
+- related people
+- summary
+- tags
+
+The action plan is the review/edit gate. You can change proposed derivative notes before execution.
 
 ### Step 2: Execute Current Action Plan
 
 When you run `Execute Current Action Plan` with the reviewed action-plan note open, Onote:
 
-- creates the revised note
-- appends action items to the follow-up tracker
-- appends delegations to the delegation tracker
-- appends strategic observations to the strategy tracker
-- appends people/coaching notes to the people tracker
-- archives the original raw note
-- archives the action-plan note
+- parses the `Proposed Derivative Notes` section
+- creates one derivative note per proposed derivative
+- adds frontmatter to each derivative note
+- adds backlinks to the source note and action plan
+- updates follow-up, delegation, strategy, and people/coaching trackers
+- ensures category home pages exist and appends links under `Recent Notes`
+- ensures program home pages exist and appends links to relevant program notes
+- archives the source note
+- moves the completed action plan to `Action Plans/Completed` by default
 
-If archive moves fail, execution stops rather than deleting source material.
+If derivative-note parsing fails, the source note is not archived.
 
 ## AI Context System
 
@@ -74,7 +107,7 @@ If the folder does not exist, Onote creates it and seeds it with default files:
 - `Organizational Vocabulary.md`
 - `Processing Rules.md`
 
-These files define canonical naming, acronym expansion, durable-link guidance, and extraction rules.
+These files define canonical naming, acronym expansion, category/link guidance, and extraction rules.
 
 Onote also maintains:
 
@@ -86,14 +119,14 @@ This file is used as vault-level acronym memory and is included in the AI contex
 
 ## Embedded Buttons
 
-Onote-generated action plans and revised notes include embedded command buttons using the Meta Bind plugin format.
+Onote-generated action plans and derivative notes include embedded command buttons using the Meta Bind plugin format.
 
 Meta Bind is optional, but recommended if you want clickable in-note buttons for:
 
 - `Process Current Note with AI`
 - `Execute Current Action Plan`
 
-Without Meta Bind, the notes still work, but the button code blocks will render as plain fenced text instead of interactive buttons.
+Without Meta Bind, the notes still work, but the button code blocks render as plain fenced text instead of interactive buttons.
 
 ## Acronym Management
 
@@ -113,9 +146,71 @@ If an acronym is new, it is appended to `Acronyms.md`.
 
 If an acronym already exists with a different expansion, Onote records the conflict under `## Acronym Conflicts` instead of overwriting the existing row.
 
+## Programs And Categories
+
+Programs are configurable in plugin settings and are the authoritative source for program names and acronyms.
+
+Default programs:
+
+- `MEGALODON` (`MEG`)
+- `MEGALODON 2` (`MEG2`)
+- `Object Based Orchestration` (`OBO`)
+- `STARSKIPPER` (`StS`)
+- `THRESHER` (`THR`)
+- `DRAGONSPELL` (`DS`)
+
+Categories are also configurable in plugin settings.
+
+Default categories:
+
+- Programs
+- Leadership
+- Strategy
+- People
+- Meetings
+- Reference
+- Scratchpad
+
+Each category has:
+
+- name
+- folder path
+- description
+
+When a new category appears in a derivative-note plan, Onote creates:
+
+- the category folder
+- a category home page at `<Category Folder>/<Category Name>.md`
+
+Category home pages include:
+
+- `# Category Name`
+- `## Purpose`
+- `## Recent Notes`
+- `## Related Topics`
+
+## Multi-Category Derivative Notes
+
+Onote does not create one final revised note.
+
+Instead, execution creates one small derivative note per relevant category/topic. A single source note can therefore produce outputs such as:
+
+- `Programs/MEGALODON/2026-04-26 1254 - Roadmap Release Process.md`
+- `Leadership/2026-04-26 1254 - PM Ownership Coaching.md`
+- `Strategy/2026-04-26 1254 - Productization vs Coordination.md`
+
+Program derivative notes use program folders:
+
+```text
+Programs/<Program Name>/
+Programs/<Program Name>/<Program Name>.md
+```
+
+If multiple programs are related, Onote places the derivative note in the strongest program folder and backlinks it from other related program home pages.
+
 ## Link Handling
 
-Suggested links are filtered and normalized before they are written back into notes.
+Suggested links are filtered and normalized before they are written back into notes or derivative-note plans.
 
 Onote prefers durable entity and concept notes such as:
 
@@ -129,7 +224,7 @@ Onote prefers durable entity and concept notes such as:
 
 Onote excludes:
 
-- daily notes
+- timestamped source notes
 - action-plan notes
 - tracker files
 - AI context files
@@ -142,11 +237,13 @@ Plain durable names are normalized to Obsidian wiki links where possible.
 ## Key Features
 
 - Two-step workflow with review before execution
-- Revised-note drafting with archive-safe execution
+- Multi-category derivative-note execution instead of a single final note
 - Vault-specific AI context loaded from Markdown files
 - Acronym discovery and persistent acronym memory
-- Related programs and related organizations extraction
+- Configurable programs and categories
+- Related programs, organizations, and people inside derivative-note plans
 - Durable suggested-link filtering
+- Category and program home page generation
 - Tracker-file updates for action items, delegations, strategy, and coaching notes
 - Conservative extraction rules for decisions and uncertainty
 - Obsidian notices for progress and failure states
@@ -162,7 +259,9 @@ Onote supports these settings:
 - strategy tracker path
 - people / coaching tracker path
 - acronym list path
-- program notes folder
+- archive completed action plans toggle
+- programs
+- categories
 - AI Context Folder Path
 - Archive Folder Path
 
@@ -205,7 +304,8 @@ Then in Obsidian:
 
 ## Example Use Cases
 
-- Turn rough meeting notes into a clean summary note plus follow-ups
+- Turn one source note into separate program, leadership, and strategy notes
 - Capture delegation items without over-classifying mentions of people
-- Track strategy themes and coaching notes across operating notes
+- Track strategy themes and coaching notes across source notes
 - Maintain consistent acronym usage and canonical program names across the vault
+- Automatically create category and program home pages as the vault grows
