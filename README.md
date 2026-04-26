@@ -53,7 +53,7 @@ When you run `Process Current Note with AI`, Onote:
 The action-plan note includes:
 
 - summary
-- recommended action items
+- recommended action items as native Markdown tasks
 - delegations
 - risks
 - decisions
@@ -83,7 +83,9 @@ When you run `Execute Current Action Plan` with the reviewed action-plan note op
 - creates one derivative note per proposed derivative
 - adds frontmatter to each derivative note
 - adds backlinks to the source note and action plan
-- updates follow-up, delegation, strategy, and people/coaching trackers
+- keeps action items in contextual notes as native Markdown tasks
+- updates delegation, strategy, and people/coaching trackers
+- ensures `Action Plans/Open Tasks.md` exists as a Tasks-query dashboard instead of a copied task tracker
 - ensures category home pages exist and appends links under `Recent Notes`
 - ensures program home pages exist and appends links to relevant program notes
 - archives the source note
@@ -238,6 +240,7 @@ Plain durable names are normalized to Obsidian wiki links where possible.
 
 - Two-step workflow with review before execution
 - Multi-category derivative-note execution instead of a single final note
+- Native Obsidian Markdown tasks instead of duplicated task-tracker copies
 - Vault-specific AI context loaded from Markdown files
 - Acronym discovery and persistent acronym memory
 - Configurable programs and categories
@@ -255,6 +258,7 @@ Onote supports these settings:
 - OpenAI API key
 - model name
 - action item tracker path
+  This is used as the `Open Tasks` dashboard path rather than a copied task tracker.
 - delegation tracker path
 - strategy tracker path
 - people / coaching tracker path

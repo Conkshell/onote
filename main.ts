@@ -108,7 +108,7 @@ const DEFAULT_CATEGORIES: CategoryConfig[] = [
 const DEFAULT_SETTINGS: OnoteSettings = {
 	apiKey: "",
 	model: "gpt-4.1-mini",
-	followUpTrackerPath: "Action Plans/Follow-Ups.md",
+	followUpTrackerPath: "Action Plans/Open Tasks.md",
 	delegationTrackerPath: "Action Plans/Delegations.md",
 	strategyTrackerPath: "Strategy/Strategy Themes.md",
 	peopleCoachingTrackerPath: "People/People - Coaching.md",
@@ -132,12 +132,25 @@ const ACRONYM_FILE_HEADER = `# Acronyms
 `;
 const PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
 const EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
+const OPEN_TASKS_DASHBOARD_CONTENT = `# Open Tasks
+
+All unresolved tasks across the vault.
+
+## All Open Tasks
+
+\`\`\`tasks
+not done
+sort by due
+group by path
+\`\`\`
+`;
 
 export default class OnotePlugin extends Plugin {
 	settings!: OnoteSettings;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		await this.ensureOpenTasksDashboard();
 
 		this.addCommand({
 			id: "process-current-note-with-ai",
@@ -293,7 +306,7 @@ export default class OnotePlugin extends Plugin {
 
 			new Notice("Onote: updating trackers...");
 			const primaryReference = derivativeFiles[0] ?? sourceFile;
-			await this.appendItemsToTracker(this.settings.followUpTrackerPath, "Follow-Ups", primaryReference, parsed.actionItems);
+			await this.ensureOpenTasksDashboard();
 			await this.appendItemsToTracker(this.settings.delegationTrackerPath, "Delegations", primaryReference, parsed.delegations);
 			await this.appendItemsToTracker(this.settings.strategyTrackerPath, "Strategy Themes", primaryReference, parsed.strategyRecommendations);
 			await this.appendItemsToTracker(this.settings.peopleCoachingTrackerPath, "People - Coaching", primaryReference, parsed.peopleCoachingNotes);
@@ -838,6 +851,9 @@ Rule: Do not rewrite PIPE as pipeline.
 			"- Suggested_links must be valid Obsidian wiki links in the form [[Note Name]].",
 			"- Do not suggest links to AI context files, Acronyms.md, tracker files, action plans, timestamped source notes, or temporary processing artifacts.",
 			"- Suggested links should be durable topic/entity notes.",
+			"- Render recommended action items as native Obsidian Markdown tasks in the action plan.",
+			"- In derivative note summary_markdown, include relevant action items as native Obsidian Markdown tasks when they belong in that derivative note.",
+			"- Do not create a copied task tracker. Tasks should live in the contextual notes where they belong.",
 			"- Only list a decision if the note clearly indicates that a choice has already been made.",
 			"- Do not convert actions, questions, ideas, tentative thoughts, coaching topics, reminders, or follow-ups into decisions.",
 			"- Preserve uncertainty. Words like maybe, probably, might, need to think, not sure, and still thinking are not firm conclusions.",
@@ -984,7 +1000,7 @@ Rule: Do not rewrite PIPE as pipeline.
 			"```",
 			"",
 			this.formatTextSection("Summary", actionPlan.summary || "_No summary generated._"),
-			this.formatListSection("Recommended Action Items", actionPlan.actionItems),
+			this.formatTaskSection("Recommended Action Items", actionPlan.actionItems),
 			this.formatListSection("Delegations", actionPlan.delegations),
 			this.formatListSection("Risks", actionPlan.risks),
 			this.formatListSection("Decisions", actionPlan.decisions),
@@ -1043,7 +1059,7 @@ Rule: Do not rewrite PIPE as pipeline.
 		return {
 			sourceNotePath,
 			summary: this.extractSectionText(contentBeforeDerivatives, "Summary"),
-			actionItems: this.extractSectionList(contentBeforeDerivatives, "Recommended Action Items"),
+			actionItems: this.extractSectionTasks(contentBeforeDerivatives, "Recommended Action Items"),
 			delegations: this.extractSectionList(contentBeforeDerivatives, "Delegations"),
 			risks: this.extractSectionList(contentBeforeDerivatives, "Risks"),
 			decisions: this.extractSectionList(contentBeforeDerivatives, "Decisions"),
@@ -1127,6 +1143,16 @@ Rule: Do not rewrite PIPE as pipeline.
 			.map((line) => line.trim())
 			.filter((line) => line.startsWith("- "))
 			.map((line) => line.slice(2).trim())
+			.filter(Boolean);
+	}
+
+	private extractSectionTasks(content: string, title: string): string[] {
+		const body = this.extractSectionBody(content, title);
+		return body
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => /^\-\s\[[ xX]\]\s+/.test(line))
+			.map((line) => line.replace(/^\-\s\[[ xX]\]\s+/, "").trim())
 			.filter(Boolean);
 	}
 
@@ -1247,6 +1273,20 @@ Rule: Do not rewrite PIPE as pipeline.
 		}
 	}
 
+	private async ensureOpenTasksDashboard(): Promise<void> {
+		const dashboardPath = this.normalizeFilePath(this.settings.followUpTrackerPath);
+		if (!dashboardPath) {
+			return;
+		}
+
+		const existing = this.app.vault.getAbstractFileByPath(dashboardPath);
+		if (existing instanceof TFile) {
+			return;
+		}
+
+		await this.getOrCreateMarkdownFile(dashboardPath, OPEN_TASKS_DASHBOARD_CONTENT);
+	}
+
 	private async getAvailableMarkdownPath(preferredPath: string): Promise<string> {
 		const normalized = preferredPath.endsWith(".md") ? preferredPath : `${preferredPath}.md`;
 		if (!this.app.vault.getAbstractFileByPath(normalized)) {
@@ -1266,6 +1306,11 @@ Rule: Do not rewrite PIPE as pipeline.
 
 	private formatListSection(title: string, items: string[]): string {
 		const body = items.length > 0 ? items.filter(Boolean).map((item) => `- ${item}`).join("\n") : "- None";
+		return `## ${title}\n\n${body}`;
+	}
+
+	private formatTaskSection(title: string, items: string[]): string {
+		const body = items.length > 0 ? items.filter(Boolean).map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
 		return `## ${title}\n\n${body}`;
 	}
 
@@ -1499,7 +1544,7 @@ class OnoteSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		this.addPathSetting(containerEl, "Action item tracker path", "followUpTrackerPath");
+		this.addPathSetting(containerEl, "Open Tasks dashboard path", "followUpTrackerPath");
 		this.addPathSetting(containerEl, "Delegation tracker path", "delegationTrackerPath");
 		this.addPathSetting(containerEl, "Strategy tracker path", "strategyTrackerPath");
 		this.addPathSetting(containerEl, "People / coaching tracker path", "peopleCoachingTrackerPath");

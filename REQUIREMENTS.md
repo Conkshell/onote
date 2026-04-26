@@ -75,7 +75,7 @@ The action plan is the review/edit gate between raw capture and final outputs.
 The generated action-plan note must include:
 
 - summary
-- recommended action items
+- recommended action items rendered as native Obsidian Markdown tasks
 - delegations
 - risks
 - decisions
@@ -247,12 +247,19 @@ If moving/archiving fails, the plugin must not silently delete source material.
 
 Execution must update these trackers:
 
-- `Action Plans/Follow-Ups.md`
+- `Action Plans/Open Tasks.md` as a query dashboard, not a copied task tracker
 - `Action Plans/Delegations.md`
 - `Strategy/Strategy Themes.md`
 - `People/People - Coaching.md`
 
-Tracker updates must append new entries rather than overwrite existing content.
+Tracker updates must append new entries rather than overwrite existing content, except `Action Plans/Open Tasks.md`, which must remain a dashboard note.
+
+Action items must:
+
+- live as native Markdown tasks in contextual notes
+- render as native tasks in action-plan notes
+- render as native tasks in derivative notes when relevant
+- not be duplicated into a tracker file
 
 ## AI Context
 
