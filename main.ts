@@ -145,6 +145,7 @@ All unresolved tasks across the vault.
 
 \`\`\`tasks
 not done
+path does not include Action Plans/Completed
 sort by due
 group by path
 \`\`\`
@@ -318,6 +319,7 @@ export default class OnotePlugin extends Plugin {
 
 			new Notice("Onote: finalizing source note and action plan...");
 			const sourceArchiveNotice = await this.archiveSourceNote(sourceFile);
+			await this.markOpenActionPlanTasksComplete(planFile);
 			const actionPlanNotice = await this.completeActionPlan(planFile, completedActionPlanPath);
 
 			await this.app.workspace.getLeaf(true).openFile(derivativeFiles[0] ?? primaryReference);
@@ -916,8 +918,9 @@ Rule: Do not rewrite PIPE as pipeline.
 			"- Do not suggest links to AI context files, Acronyms.md, tracker files, action plans, timestamped source notes, or temporary processing artifacts.",
 			"- Suggested links should be durable topic/entity notes.",
 			"- Render recommended action items as native Obsidian Markdown tasks in the action plan.",
-			"- In derivative note summary_markdown, include relevant action items as native Obsidian Markdown tasks when they belong in that derivative note.",
 			"- Do not create a copied task tracker. Tasks should live in the contextual notes where they belong.",
+			"- Keep derivative note summary_markdown focused on scannable summary bullets, not duplicated task lists.",
+			"- Onote will attach contextual unchecked action items to derivative notes separately, so do not repeat those tasks in summary_markdown.",
 			"- Only list a decision if the note clearly indicates that a choice has already been made.",
 			"- Do not convert actions, questions, ideas, tentative thoughts, coaching topics, reminders, or follow-ups into decisions.",
 			"- Preserve uncertainty. Words like maybe, probably, might, need to think, not sure, and still thinking are not firm conclusions.",
@@ -956,12 +959,12 @@ Rule: Do not rewrite PIPE as pipeline.
 		const data = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
 		return {
 			summary: this.asString(data.summary),
-			actionItems: this.asStringArray(data.action_items),
-			delegations: this.asStringArray(data.delegations),
-			risks: this.asStringArray(data.risks),
-			decisions: this.asStringArray(data.decisions),
-			strategyRecommendations: this.asStringArray(data.strategy_recommendations),
-			peopleCoachingNotes: this.asStringArray(data.people_coaching_notes),
+			actionItems: this.asUniqueStringArray(data.action_items),
+			delegations: this.asUniqueStringArray(data.delegations),
+			risks: this.asUniqueStringArray(data.risks),
+			decisions: this.asUniqueStringArray(data.decisions),
+			strategyRecommendations: this.asUniqueStringArray(data.strategy_recommendations),
+			peopleCoachingNotes: this.asUniqueStringArray(data.people_coaching_notes),
 			suggestedLinks: this.asSuggestedLinks(data.suggested_links),
 			derivativeNotes: this.asDerivativeNotes(data.derivative_notes),
 		};
@@ -1011,6 +1014,20 @@ Rule: Do not rewrite PIPE as pipeline.
 			.filter((item): item is string => typeof item === "string")
 			.map((item) => item.trim())
 			.filter(Boolean);
+	}
+
+	private asUniqueStringArray(value: unknown): string[] {
+		const seen = new Set<string>();
+		const result: string[] = [];
+		for (const item of this.asStringArray(value)) {
+			const key = item.toLowerCase();
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			result.push(item);
+		}
+		return result;
 	}
 
 	private asSuggestedLinks(value: unknown): SuggestedLink[] {
@@ -1248,6 +1265,7 @@ Rule: Do not rewrite PIPE as pipeline.
 		const createdAt = new Date().toISOString();
 		const sourceLink = `[[${this.app.metadataCache.fileToLinktext(sourceFile, "", true)}]]`;
 		const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
+		const uniqueActionItems = this.dedupeTasksAgainstSummary(actionItems, plan.summaryMarkdown);
 		return [
 			"---",
 			'onote_type: derivative_note',
@@ -1270,8 +1288,7 @@ Rule: Do not rewrite PIPE as pipeline.
 			"```",
 			"",
 			plan.summaryMarkdown || "_No derivative summary provided._",
-			"",
-			this.formatTaskSection("Action Items", actionItems),
+			...(uniqueActionItems.length > 0 ? ["", this.formatTaskSection("Action Items", uniqueActionItems)] : []),
 			"",
 			this.formatListSection("Related Programs", plan.relatedPrograms.map((item) => this.renderDurableEntityLink(item))),
 			this.formatListSection("Related Organizations", plan.relatedOrganizations.map((item) => this.renderDurableEntityLink(item))),
@@ -1292,16 +1309,55 @@ Rule: Do not rewrite PIPE as pipeline.
 		return [`${key}:`, ...values.map((value) => `  - "${this.escapeYamlString(value)}"`)].join("\n");
 	}
 
+	private dedupeTasksAgainstSummary(actionItems: string[], summaryMarkdown: string): string[] {
+		const normalizedSummary = this.normalizeTaskText(summaryMarkdown);
+		const seen = new Set<string>();
+		const result: string[] = [];
+
+		for (const item of actionItems) {
+			const normalizedItem = this.normalizeTaskText(item);
+			if (!normalizedItem) {
+				continue;
+			}
+			if (seen.has(normalizedItem)) {
+				continue;
+			}
+			if (normalizedSummary.includes(normalizedItem)) {
+				continue;
+			}
+			seen.add(normalizedItem);
+			result.push(item);
+		}
+
+		return result;
+	}
+
+	private normalizeTaskText(value: string): string {
+		return value
+			.toLowerCase()
+			.replace(/^\-\s\[[ xX]\]\s+/, "")
+			.replace(/[^\p{L}\p{N}\s📅-]/gu, " ")
+			.replace(/\s+/g, " ")
+			.trim();
+	}
+
 	private async appendItemsToTracker(trackerPath: string, title: string, sourceFile: TFile, items: string[]): Promise<void> {
 		const normalizedPath = this.normalizeFilePath(trackerPath);
 		if (!normalizedPath || items.length === 0) {
 			return;
 		}
 		const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `# ${title}\n`);
-		const timestamp = window.moment().format("YYYY-MM-DD");
 		const sourceLink = this.app.metadataCache.fileToLinktext(sourceFile, normalizedPath, true);
-		const block = ["", `## ${timestamp} - [[${sourceLink}]]`, ...items.map((item) => `- ${item}`), ""].join("\n");
+		const block = ["", `[[${sourceLink}]]`, "", ...items.map((item) => `- ${item}`), ""].join("\n");
 		await this.app.vault.append(trackerFile, block);
+	}
+
+	private async markOpenActionPlanTasksComplete(planFile: TFile): Promise<void> {
+		const content = await this.app.vault.read(planFile);
+		const updated = content.replace(/^- \[ \] /gm, "- [x] ");
+		if (updated !== content) {
+			await this.app.vault.modify(planFile, updated);
+		}
 	}
 
 	private async appendLinkUnderSection(filePath: string, sectionTitle: string, link: string): Promise<void> {
