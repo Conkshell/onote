@@ -303,10 +303,36 @@ npm run dev
 
 ## Local Testing
 
+Run the automated smoke suite from the repo root:
+
+```bash
+npm run test
+```
+
+This covers the main plugin flow against the in-memory test harness in `scripts/smoke-test.js`, including:
+
+- first-pass source note ID creation
+- action-plan regeneration without duplicate plans
+- derivative note execution
+- program dashboard refresh
+- debug reset behavior
+
+Sample raw-note input used by the smoke test lives at:
+
+```text
+test-data/sample-source-note.md
+```
+
+To test against a real Obsidian vault, this repo includes a sample vault at:
+
+```text
+onote-test/
+```
+
 For a local vault test, copy the built plugin into:
 
 ```text
-YOUR_VAULT/.obsidian/plugins/onote/
+onote-test/.obsidian/plugins/onote/
 ```
 
 Required files:
@@ -315,13 +341,28 @@ Required files:
 - `manifest.json`
 - `versions.json`
 
+Repo-local copy command:
+
+```bash
+cp main.js manifest.json versions.json onote-test/.obsidian/plugins/onote/
+```
+
 Then in Obsidian:
 
-1. Open the target vault.
+1. Open `onote-test`.
 2. Go to `Settings -> Community plugins`.
 3. Disable `Restricted mode` if needed.
 4. Enable `Onote`.
 5. Configure your API key and model.
+
+Suggested manual test flow inside `onote-test`:
+
+1. Create or paste a raw note using `test-data/sample-source-note.md` as starter content.
+2. Run `Process Current Note with AI`.
+3. Review the generated action plan in `Action Plans/`.
+4. Run `Execute Current Action Plan`.
+5. Verify derivative notes, `Actions.md`, and any affected program dashboard.
+6. If you want to reset the generated state, run `Reset Onote Debug State`.
 
 ## Example Use Cases
 
