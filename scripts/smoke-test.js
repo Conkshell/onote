@@ -186,6 +186,9 @@ function createVaultHarness() {
       })();
       files.set(newPath, file);
     },
+    async trashFile(file) {
+      files.delete(file.path);
+    },
   };
 
   const metadataCache = {
@@ -286,6 +289,11 @@ async function main() {
     "Inbox/2026-04-26 1254 - Mixed Topics.md",
     sampleNote,
   );
+  const persistentSource = harness.createFile(
+    "Inbox/2026-04-26 1300 - Persistent Source.md",
+    "# Persistent Source\n\nWorking note.\n",
+  );
+  await plugin.ensureSourceNoteId(persistentSource, persistentSource.content);
 
   const expandedPlan = plugin.ensureDerivativeCoverage(
     {
@@ -579,6 +587,31 @@ programs:
     (dashboardFile.content.match(/ONOTE_DASHBOARD_START/g) || []).length === 1 &&
       (dashboardFile.content.match(/ONOTE_DASHBOARD_END/g) || []).length === 1,
     "Program dashboard generated block markers were duplicated",
+  );
+
+  const aiContextBeforeReset = await plugin.loadAIContext();
+  assert(aiContextBeforeReset.includes("Program Glossary"), "AI context files were not created before reset");
+
+  await plugin.resetOnoteDebugState();
+
+  const resetDashboard = harness.files.get("Action Plans/Open Tasks.md");
+  assert(resetDashboard, "Open Tasks dashboard was not recreated after reset");
+  assert(resetDashboard.content === EXPECTED_OPEN_TASKS_DASHBOARD, "Open Tasks dashboard was not reset to baseline content");
+  assert(!harness.files.has("Action Plans/Delegations.md"), "Delegations tracker was not removed by debug reset");
+  assert(!harness.files.has("Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"), "Completed action plan was not removed by debug reset");
+  assert(!harness.files.has("Programs/MEGALODON/2026-04-26 1254 - Roadmap Release Process.md"), "Derivative note was not removed by debug reset");
+  assert(!harness.files.has("Programs/MEGALODON/MEGALODON.md"), "Program dashboard was not removed by debug reset");
+  assert(!harness.files.has("Archive/2026-04-26 1254 - Mixed Topics.md"), "Archived source note was not removed by debug reset");
+  assert(!harness.files.has("Acronyms.md"), "Acronym file was not removed by debug reset");
+  assert(!harness.files.has("System/AI Context/Program Glossary.md"), "AI context files were not removed by debug reset");
+  assert(harness.files.has("Inbox/2026-04-26 1300 - Persistent Source.md"), "Reset removed a non-generated source note");
+  assert(
+    !harness.files.get("Inbox/2026-04-26 1300 - Persistent Source.md").content.includes("onote_note_id:"),
+    "Reset did not clear Onote note IDs from surviving notes",
+  );
+  assert(
+    !harness.files.get("People/People.md").content.includes("[[2026-04-26 1254 - Ben Ownership Coaching]]"),
+    "Reset did not remove stale generated links from surviving notes",
   );
 
   console.log("Smoke test passed.");

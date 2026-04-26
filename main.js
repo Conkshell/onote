@@ -123,6 +123,13 @@ var OnotePlugin = class extends import_obsidian.Plugin {
         await this.refreshAllProgramDashboards();
       }
     });
+    this.addCommand({
+      id: "reset-debug-state",
+      name: "Reset Onote Debug State",
+      callback: async () => {
+        await this.resetOnoteDebugState();
+      }
+    });
     this.addSettingTab(new OnoteSettingTab(this.app, this));
   }
   async loadSettings() {
@@ -561,6 +568,48 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     await this.app.vault.modify(dashboardFile, updatedContent);
     if (announce) {
       new import_obsidian.Notice(`Onote: refreshed ${canonicalProgramName} dashboard.`, 6e3);
+    }
+  }
+  async resetOnoteDebugState() {
+    new import_obsidian.Notice("Onote: resetting debug state...");
+    try {
+      const files = this.app.vault.getMarkdownFiles();
+      const remainingFiles = /* @__PURE__ */ new Map();
+      const filesToDelete = [];
+      for (const file of files) {
+        const content = await this.app.vault.read(file);
+        if (this.shouldDeleteForDebugReset(file, content)) {
+          filesToDelete.push(file);
+        } else {
+          remainingFiles.set(file.path, { file, content });
+        }
+      }
+      const deletedLinkTexts = new Set(
+        filesToDelete.map((file) => this.app.metadataCache.fileToLinktext(file, "", true)).filter(Boolean)
+      );
+      for (const file of filesToDelete) {
+        await this.trashFile(file);
+      }
+      let updatedFiles = 0;
+      for (const { file, content } of remainingFiles.values()) {
+        const withoutIds = this.removeFrontmatterKeys(content, ["onote_note_id"]);
+        const withoutDeletedLinks = this.removeDeletedLinksFromContent(withoutIds, deletedLinkTexts);
+        if (withoutDeletedLinks !== content) {
+          await this.app.vault.modify(file, withoutDeletedLinks);
+          updatedFiles += 1;
+        }
+      }
+      this.programNoteFactsCache.clear();
+      this.noteIdCache.clear();
+      await this.ensureOpenTasksDashboard();
+      new import_obsidian.Notice(
+        `Onote: reset removed ${filesToDelete.length} generated files and cleaned ${updatedFiles} surviving notes.`,
+        8e3
+      );
+    } catch (error) {
+      console.error("Onote debug reset failed", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      new import_obsidian.Notice(`Onote reset failed: ${message}`, 8e3);
     }
   }
   async inferProgramFromFile(file) {
@@ -1871,6 +1920,65 @@ ${content}`;
       await this.app.vault.modify(file, updated);
     }
   }
+  shouldDeleteForDebugReset(file, content) {
+    const normalizedPath = this.normalizeFilePath(file.path);
+    const onoteType = this.readFrontmatterValue(content, "onote_type");
+    if (onoteType === "action_plan" || onoteType === "derivative_note" || onoteType === "program_dashboard") {
+      return true;
+    }
+    const exactPaths = new Set(
+      [
+        this.settings.followUpTrackerPath,
+        this.settings.delegationTrackerPath,
+        this.settings.strategyTrackerPath,
+        this.settings.peopleCoachingTrackerPath,
+        this.settings.acronymListPath
+      ].map((path) => this.normalizeFilePath(path)).filter(Boolean)
+    );
+    if (exactPaths.has(normalizedPath)) {
+      return true;
+    }
+    const folders = [ACTION_PLANS_FOLDER, this.settings.aiContextFolderPath, this.settings.archiveFolderPath].map((folder) => this.normalizeFolder(folder)).filter(Boolean);
+    return folders.some((folder) => this.isPathInsideFolder(normalizedPath, folder));
+  }
+  async trashFile(file) {
+    const fileManager = this.app.fileManager;
+    if (typeof fileManager.trashFile === "function") {
+      await fileManager.trashFile(file);
+      return;
+    }
+    const vault = this.app.vault;
+    if (typeof vault.delete === "function") {
+      await vault.delete(file, true);
+      return;
+    }
+    throw new Error(`Could not delete ${file.path}; no supported delete API is available.`);
+  }
+  removeFrontmatterKeys(content, keys) {
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!frontmatterMatch) {
+      return content;
+    }
+    const keySet = new Set(keys.map((key) => key.toLowerCase()));
+    const lines = frontmatterMatch[1].split("\n").filter((line) => !keySet.has(line.split(":")[0].trim().toLowerCase()));
+    if (lines.length === 0) {
+      return content.replace(/^---\n[\s\S]*?\n---\n*/m, "");
+    }
+    const updatedFrontmatter = `---
+${lines.join("\n")}
+---`;
+    return content.replace(/^---\n[\s\S]*?\n---/, updatedFrontmatter);
+  }
+  removeDeletedLinksFromContent(content, deletedLinkTexts) {
+    if (deletedLinkTexts.size === 0) {
+      return content;
+    }
+    const filtered = content.split("\n").filter((line) => {
+      const match = line.match(/^\s*-\s+\[\[([^\]|]+)(?:\|[^\]]+)?\]\]\s*$/);
+      return !match || !deletedLinkTexts.has(match[1].trim());
+    });
+    return filtered.join("\n").replace(/\n{3,}/g, "\n\n");
+  }
   async getOrCreateMarkdownFile(path, initialContent) {
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof import_obsidian.TFile) {
@@ -2035,6 +2143,9 @@ ${body}`;
   }
   normalizeFolder(folder) {
     return this.normalizeVaultPath(folder);
+  }
+  isPathInsideFolder(path, folder) {
+    return path === folder || path.startsWith(`${folder}/`);
   }
   normalizeFilePath(path) {
     return this.normalizeVaultPath(path);

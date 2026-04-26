@@ -160,6 +160,7 @@ const PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
 const EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
 const REFRESH_PROGRAM_DASHBOARD_COMMAND = "onote:refresh-program-dashboard";
 const REFRESH_ALL_PROGRAM_DASHBOARDS_COMMAND = "onote:refresh-all-program-dashboards";
+const RESET_DEBUG_STATE_COMMAND = "onote:reset-debug-state";
 const OPEN_TASKS_DASHBOARD_CONTENT = `# Open Tasks
 
 All unresolved tasks across the vault.
@@ -214,6 +215,14 @@ export default class OnotePlugin extends Plugin {
 			name: "Refresh All Program Dashboards",
 			callback: async () => {
 				await this.refreshAllProgramDashboards();
+			},
+		});
+
+		this.addCommand({
+			id: "reset-debug-state",
+			name: "Reset Onote Debug State",
+			callback: async () => {
+				await this.resetOnoteDebugState();
 			},
 		});
 
@@ -753,6 +762,55 @@ export default class OnotePlugin extends Plugin {
 
 		if (announce) {
 			new Notice(`Onote: refreshed ${canonicalProgramName} dashboard.`, 6000);
+		}
+	}
+
+	private async resetOnoteDebugState(): Promise<void> {
+		new Notice("Onote: resetting debug state...");
+		try {
+			const files = this.app.vault.getMarkdownFiles();
+			const remainingFiles = new Map<string, { file: TFile; content: string }>();
+			const filesToDelete: TFile[] = [];
+
+			for (const file of files) {
+				const content = await this.app.vault.read(file);
+				if (this.shouldDeleteForDebugReset(file, content)) {
+					filesToDelete.push(file);
+				} else {
+					remainingFiles.set(file.path, { file, content });
+				}
+			}
+
+			const deletedLinkTexts = new Set(
+				filesToDelete.map((file) => this.app.metadataCache.fileToLinktext(file, "", true)).filter(Boolean),
+			);
+
+			for (const file of filesToDelete) {
+				await this.trashFile(file);
+			}
+
+			let updatedFiles = 0;
+			for (const { file, content } of remainingFiles.values()) {
+				const withoutIds = this.removeFrontmatterKeys(content, ["onote_note_id"]);
+				const withoutDeletedLinks = this.removeDeletedLinksFromContent(withoutIds, deletedLinkTexts);
+				if (withoutDeletedLinks !== content) {
+					await this.app.vault.modify(file, withoutDeletedLinks);
+					updatedFiles += 1;
+				}
+			}
+
+			this.programNoteFactsCache.clear();
+			this.noteIdCache.clear();
+			await this.ensureOpenTasksDashboard();
+
+			new Notice(
+				`Onote: reset removed ${filesToDelete.length} generated files and cleaned ${updatedFiles} surviving notes.`,
+				8000,
+			);
+		} catch (error) {
+			console.error("Onote debug reset failed", error);
+			const message = error instanceof Error ? error.message : "Unknown error";
+			new Notice(`Onote reset failed: ${message}`, 8000);
 		}
 	}
 
@@ -2305,6 +2363,87 @@ Rule: Do not rewrite PIPE as pipeline.
 		}
 	}
 
+	private shouldDeleteForDebugReset(file: TFile, content: string): boolean {
+		const normalizedPath = this.normalizeFilePath(file.path);
+		const onoteType = this.readFrontmatterValue(content, "onote_type");
+		if (onoteType === "action_plan" || onoteType === "derivative_note" || onoteType === "program_dashboard") {
+			return true;
+		}
+
+		const exactPaths = new Set(
+			[
+				this.settings.followUpTrackerPath,
+				this.settings.delegationTrackerPath,
+				this.settings.strategyTrackerPath,
+				this.settings.peopleCoachingTrackerPath,
+				this.settings.acronymListPath,
+			]
+				.map((path) => this.normalizeFilePath(path))
+				.filter(Boolean),
+		);
+		if (exactPaths.has(normalizedPath)) {
+			return true;
+		}
+
+		const folders = [ACTION_PLANS_FOLDER, this.settings.aiContextFolderPath, this.settings.archiveFolderPath]
+			.map((folder) => this.normalizeFolder(folder))
+			.filter(Boolean);
+		return folders.some((folder) => this.isPathInsideFolder(normalizedPath, folder));
+	}
+
+	private async trashFile(file: TFile): Promise<void> {
+		const fileManager = this.app.fileManager as {
+			trashFile?: (file: TFile) => Promise<void>;
+		};
+		if (typeof fileManager.trashFile === "function") {
+			await fileManager.trashFile(file);
+			return;
+		}
+
+		const vault = this.app.vault as unknown as {
+			delete?: (file: TFile, force?: boolean) => Promise<void>;
+		};
+		if (typeof vault.delete === "function") {
+			await vault.delete(file, true);
+			return;
+		}
+
+		throw new Error(`Could not delete ${file.path}; no supported delete API is available.`);
+	}
+
+	private removeFrontmatterKeys(content: string, keys: string[]): string {
+		const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+		if (!frontmatterMatch) {
+			return content;
+		}
+
+		const keySet = new Set(keys.map((key) => key.toLowerCase()));
+		const lines = frontmatterMatch[1]
+			.split("\n")
+			.filter((line) => !keySet.has(line.split(":")[0].trim().toLowerCase()));
+
+		if (lines.length === 0) {
+			return content.replace(/^---\n[\s\S]*?\n---\n*/m, "");
+		}
+
+		const updatedFrontmatter = `---\n${lines.join("\n")}\n---`;
+		return content.replace(/^---\n[\s\S]*?\n---/, updatedFrontmatter);
+	}
+
+	private removeDeletedLinksFromContent(content: string, deletedLinkTexts: Set<string>): string {
+		if (deletedLinkTexts.size === 0) {
+			return content;
+		}
+
+		const filtered = content
+			.split("\n")
+			.filter((line) => {
+				const match = line.match(/^\s*-\s+\[\[([^\]|]+)(?:\|[^\]]+)?\]\]\s*$/);
+				return !match || !deletedLinkTexts.has(match[1].trim());
+			});
+		return filtered.join("\n").replace(/\n{3,}/g, "\n\n");
+	}
+
 	private async getOrCreateMarkdownFile(path: string, initialContent: string): Promise<TFile> {
 		const existing = this.app.vault.getAbstractFileByPath(path);
 		if (existing instanceof TFile) {
@@ -2498,6 +2637,10 @@ Rule: Do not rewrite PIPE as pipeline.
 
 	private normalizeFolder(folder: string): string {
 		return this.normalizeVaultPath(folder);
+	}
+
+	private isPathInsideFolder(path: string, folder: string): boolean {
+		return path === folder || path.startsWith(`${folder}/`);
 	}
 
 	private normalizeFilePath(path: string): string {
