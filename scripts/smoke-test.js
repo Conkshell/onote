@@ -116,6 +116,7 @@ All unresolved tasks across the vault.
 
 \`\`\`tasks
 not done
+path does not include Action Plans/Completed
 sort by due
 group by path
 \`\`\`
@@ -283,8 +284,9 @@ async function main() {
   const actionPlanContent = plugin.buildActionPlanNoteContent(sourceFile, {
     summary: "Mixed topic source note.",
     actionItems: [
-      "Ask Hulbs what he means by tier 1",
+      "- [ ] Ask Hulbs what he means by tier 1",
       "Follow up with Andy on roadmap view before PIPE 📅 2026-05-02",
+      "- [ ] Ask Ben about OBO approvals",
       "Ask Ben about OBO approvals",
     ],
     delegations: ["Ben to draft the ISG summary."],
@@ -301,7 +303,8 @@ async function main() {
         relatedPrograms: ["MEGALODON"],
         relatedOrganizations: [],
         relatedPeople: [],
-        summaryMarkdown: "- Roadmap alignment for MEGALODON.\n- Delivery sequencing still needs clarification.",
+        summaryMarkdown:
+          "- Roadmap alignment for MEGALODON.\n- Delivery sequencing still needs clarification.\n- [ ] Ask Hulbs what he means by tier 1\n- [ ] Follow up with Andy before PIPE on roadmap view",
         tags: ["roadmap"],
       },
       {
@@ -311,7 +314,8 @@ async function main() {
         relatedPrograms: ["Object Based Orchestration"],
         relatedOrganizations: [],
         relatedPeople: ["Ben"],
-        summaryMarkdown: "- Coaching focus for Ben.\n- Ownership language needs sharpening.",
+        summaryMarkdown:
+          "- Coaching focus for Ben.\n- Ownership language needs sharpening.\n- [ ] Ask Ben in next 1:1 what he is avoiding or worried about",
         tags: ["coaching"],
       },
       {
@@ -328,6 +332,10 @@ async function main() {
   });
 
   assert(actionPlanContent.includes("- [ ] Ask Hulbs what he means by tier 1"), "Action plan did not render checkbox tasks");
+  assert(
+    !actionPlanContent.includes("- [ ] - [ ] Ask Hulbs what he means by tier 1"),
+    "Action plan double-wrapped an already formatted task",
+  );
   assert(
     actionPlanContent.includes("- [ ] Follow up with Andy on roadmap view before PIPE 📅 2026-05-02"),
     "Action plan did not preserve due-date task text",
@@ -354,6 +362,16 @@ async function main() {
   assert(
     programDerivative.content.includes("- [ ] Follow up with Andy on roadmap view before PIPE 📅 2026-05-02"),
     "Unchecked roadmap task was not carried into derivative note with due date preserved",
+  );
+  assert(
+    !programDerivative.content.includes("## Action Items\n\n- [ ] Ask Hulbs what he means by tier 1"),
+    "Program derivative duplicated a task that was already present in summary markdown",
+  );
+  assert(
+    !programDerivative.content.includes("- [ ] - [ ]") &&
+      !peopleDerivative.content.includes("- [ ] - [ ]") &&
+      !strategyDerivative.content.includes("- [ ] - [ ]"),
+    "Derivative note carried forward malformed nested checkbox task text",
   );
   assert(
     !programDerivative.content.includes("- [x] Ask Ben about OBO approvals") &&

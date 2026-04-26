@@ -959,7 +959,7 @@ Rule: Do not rewrite PIPE as pipeline.
 		const data = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
 		return {
 			summary: this.asString(data.summary),
-			actionItems: this.asUniqueStringArray(data.action_items),
+			actionItems: this.asUniqueTaskArray(data.action_items),
 			delegations: this.asUniqueStringArray(data.delegations),
 			risks: this.asUniqueStringArray(data.risks),
 			decisions: this.asUniqueStringArray(data.decisions),
@@ -1026,6 +1026,21 @@ Rule: Do not rewrite PIPE as pipeline.
 			}
 			seen.add(key);
 			result.push(item);
+		}
+		return result;
+	}
+
+	private asUniqueTaskArray(value: unknown): string[] {
+		const seen = new Set<string>();
+		const result: string[] = [];
+		for (const item of this.asStringArray(value)) {
+			const sanitized = this.sanitizeTaskText(item);
+			const key = this.normalizeTaskText(sanitized);
+			if (!key || seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			result.push(sanitized);
 		}
 		return result;
 	}
@@ -1235,7 +1250,7 @@ Rule: Do not rewrite PIPE as pipeline.
 			.filter((line) => /^\-\s\[[ xX]\]\s+/.test(line))
 			.map((line) => {
 				const checked = /^\-\s\[[xX]\]\s+/.test(line);
-				const text = line.replace(/^\-\s\[[ xX]\]\s+/, "").trim();
+				const text = this.sanitizeTaskText(line.replace(/^\-\s\[[ xX]\]\s+/, "").trim());
 				return text ? { text, checked } : null;
 			})
 			.filter((item): item is ReviewTask => item !== null);
@@ -1341,6 +1356,20 @@ Rule: Do not rewrite PIPE as pipeline.
 			.trim();
 	}
 
+	private sanitizeTaskText(value: string): string {
+		let sanitized = value.trim();
+		let previous = "";
+		while (sanitized && sanitized !== previous) {
+			previous = sanitized;
+			sanitized = sanitized
+				.replace(/^\-\s\[[ xX]\]\s+/, "")
+				.replace(/^[*-]\s+/, "")
+				.replace(/^\d+\.\s+/, "")
+				.trim();
+		}
+		return sanitized;
+	}
+
 	private async appendItemsToTracker(trackerPath: string, title: string, sourceFile: TFile, items: string[]): Promise<void> {
 		const normalizedPath = this.normalizeFilePath(trackerPath);
 		if (!normalizedPath || items.length === 0) {
@@ -1441,7 +1470,8 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private formatTaskSection(title: string, items: string[]): string {
-		const body = items.length > 0 ? items.filter(Boolean).map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
+		const normalizedItems = this.asUniqueTaskArray(items);
+		const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
 		return `## ${title}\n\n${body}`;
 	}
 

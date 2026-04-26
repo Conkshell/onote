@@ -751,7 +751,7 @@ Rule: Do not rewrite PIPE as pipeline.
     const data = typeof raw === "object" && raw !== null ? raw : {};
     return {
       summary: this.asString(data.summary),
-      actionItems: this.asUniqueStringArray(data.action_items),
+      actionItems: this.asUniqueTaskArray(data.action_items),
       delegations: this.asUniqueStringArray(data.delegations),
       risks: this.asUniqueStringArray(data.risks),
       decisions: this.asUniqueStringArray(data.decisions),
@@ -808,6 +808,20 @@ Rule: Do not rewrite PIPE as pipeline.
       }
       seen.add(key);
       result.push(item);
+    }
+    return result;
+  }
+  asUniqueTaskArray(value) {
+    const seen = /* @__PURE__ */ new Set();
+    const result = [];
+    for (const item of this.asStringArray(value)) {
+      const sanitized = this.sanitizeTaskText(item);
+      const key = this.normalizeTaskText(sanitized);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      result.push(sanitized);
     }
     return result;
   }
@@ -976,7 +990,7 @@ Rule: Do not rewrite PIPE as pipeline.
     const body = this.extractSectionBody(content, title);
     return body.split("\n").map((line) => line.trim()).filter((line) => /^\-\s\[[ xX]\]\s+/.test(line)).map((line) => {
       const checked = /^\-\s\[[xX]\]\s+/.test(line);
-      const text = line.replace(/^\-\s\[[ xX]\]\s+/, "").trim();
+      const text = this.sanitizeTaskText(line.replace(/^\-\s\[[ xX]\]\s+/, "").trim());
       return text ? { text, checked } : null;
     }).filter((item) => item !== null);
   }
@@ -1061,6 +1075,15 @@ Rule: Do not rewrite PIPE as pipeline.
   }
   normalizeTaskText(value) {
     return value.toLowerCase().replace(/^\-\s\[[ xX]\]\s+/, "").replace(/[^\p{L}\p{N}\s📅-]/gu, " ").replace(/\s+/g, " ").trim();
+  }
+  sanitizeTaskText(value) {
+    let sanitized = value.trim();
+    let previous = "";
+    while (sanitized && sanitized !== previous) {
+      previous = sanitized;
+      sanitized = sanitized.replace(/^\-\s\[[ xX]\]\s+/, "").replace(/^[*-]\s+/, "").replace(/^\d+\.\s+/, "").trim();
+    }
+    return sanitized;
   }
   async appendItemsToTracker(trackerPath, title, sourceFile, items) {
     const normalizedPath = this.normalizeFilePath(trackerPath);
@@ -1163,7 +1186,8 @@ ${text || "_None_"}`;
 ${body}`;
   }
   formatTaskSection(title, items) {
-    const body = items.length > 0 ? items.filter(Boolean).map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
+    const normalizedItems = this.asUniqueTaskArray(items);
+    const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
     return `## ${title}
 
 ${body}`;
