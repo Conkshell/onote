@@ -258,8 +258,8 @@ async function main() {
     archiveFolderPath: "Archive",
     archiveCompletedActionPlans: false,
     programs: [
-      { name: "MEGALODON", acronyms: ["MEG"] },
-      { name: "Object Based Orchestration", acronyms: ["OBO"] },
+      { name: "MEGALODON", acronyms: ["MEG"], folderPath: "Programs/MEGALODON", dashboardEnabled: true },
+      { name: "Object Based Orchestration", acronyms: ["OBO"], folderPath: "Programs/Object Based Orchestration", dashboardEnabled: true },
     ],
     categories: [
       { name: "Programs", folderPath: "Programs", description: "" },
@@ -444,6 +444,101 @@ async function main() {
   assert(
     harness.trashed.includes("Inbox/2026-04-26 1254 - Mixed Topics.md"),
     "Source note was not archived using native trash behavior",
+  );
+
+  harness.createFile(
+    "Programs/MEGALODON/2026-04-26 1400 - Release Risks.md",
+    `---
+onote_type: derivative_note
+programs:
+  - "MEGALODON"
+---
+
+# Release Risks
+
+## Summary
+
+- Release authority remains unclear.
+
+## Risks
+
+- Release authority is still unclear.
+- Rollback impact is not well defined.
+
+## Decisions
+
+- Use risk-based release framing for MEGALODON.
+
+## Strategy Recommendations
+
+- Clarify roadmap ownership and customer promise boundaries.
+
+## Action Items
+
+- [ ] Follow up with Andy before PIPE
+
+## Related Programs
+
+- [[MEGALODON]]
+`,
+  );
+  harness.createFile(
+    "Programs/MEGALODON/2026-04-26 1410 - Staffing.md",
+    `---
+onote_type: derivative_note
+programs:
+  - "MEGALODON"
+---
+
+# Staffing
+
+## Summary
+
+- Staffing plan is still missing dates.
+
+## Risks
+
+- Staffing plan has no real dates.
+
+## Related Programs
+
+- [[MEGALODON]]
+`,
+  );
+  harness.createFile(
+    "Leadership/2026-04-26 1420 - ISG Ownership.md",
+    `# ISG Ownership
+
+[[MEGALODON]]
+
+## Summary
+
+- PM layer is weak and ownership boundaries remain fuzzy.
+
+## Strategy Recommendations
+
+- Consider a systems integration lead or solution architect.
+`,
+  );
+
+  await plugin.refreshProgramDashboard("MEGALODON", false);
+
+  const dashboardFile = harness.files.get("Programs/MEGALODON/MEGALODON.md");
+  assert(dashboardFile, "Program dashboard file was not created");
+  assert(dashboardFile.content.includes("onote_type: program_dashboard"), "Program dashboard frontmatter missing");
+  assert(dashboardFile.content.includes("## Current Status"), "Program dashboard missing current status section");
+  assert(dashboardFile.content.includes('path includes "Programs/MEGALODON"'), "Program dashboard task query did not target program folder");
+  assert(dashboardFile.content.includes("[[2026-04-26 1410 - Staffing]]"), "Program dashboard missing recent note link");
+  assert(dashboardFile.content.includes("Use risk-based release framing for MEGALODON."), "Program dashboard missing recent decision");
+  assert(dashboardFile.content.includes("systems integration lead or solution architect"), "Program dashboard missing strategy theme");
+  assert(
+    dashboardFile.content.includes("Status: Red") || dashboardFile.content.includes("Status: Yellow"),
+    "Program dashboard did not calculate a non-unknown status from related notes",
+  );
+  assert(
+    (dashboardFile.content.match(/ONOTE_DASHBOARD_START/g) || []).length === 1 &&
+      (dashboardFile.content.match(/ONOTE_DASHBOARD_END/g) || []).length === 1,
+    "Program dashboard generated block markers were duplicated",
   );
 
   console.log("Smoke test passed.");

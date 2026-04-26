@@ -28,12 +28,12 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 var DEFAULT_PROGRAMS = [
-  { name: "MEGALODON", acronyms: ["MEG"] },
-  { name: "MEGALODON 2", acronyms: ["MEG2"] },
-  { name: "Object Based Orchestration", acronyms: ["OBO"] },
-  { name: "STARSKIPPER", acronyms: ["StS"] },
-  { name: "THRESHER", acronyms: ["THR"] },
-  { name: "DRAGONSPELL", acronyms: ["DS"] }
+  { name: "MEGALODON", acronyms: ["MEG"], folderPath: "Programs/MEGALODON", dashboardEnabled: true },
+  { name: "MEGALODON 2", acronyms: ["MEG2"], folderPath: "Programs/MEGALODON 2", dashboardEnabled: true },
+  { name: "Object Based Orchestration", acronyms: ["OBO"], folderPath: "Programs/Object Based Orchestration", dashboardEnabled: true },
+  { name: "STARSKIPPER", acronyms: ["StS"], folderPath: "Programs/STARSKIPPER", dashboardEnabled: true },
+  { name: "THRESHER", acronyms: ["THR"], folderPath: "Programs/THRESHER", dashboardEnabled: true },
+  { name: "DRAGONSPELL", acronyms: ["DS"], folderPath: "Programs/DRAGONSPELL", dashboardEnabled: true }
 ];
 var DEFAULT_CATEGORIES = [
   { name: "Programs", folderPath: "Programs", description: "Program-specific delivery, roadmap, release, and execution notes." },
@@ -70,6 +70,7 @@ var ACRONYM_FILE_HEADER = `# Acronyms
 `;
 var PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
 var EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
+var REFRESH_PROGRAM_DASHBOARD_COMMAND = "onote:refresh-program-dashboard";
 var OPEN_TASKS_DASHBOARD_CONTENT = `# Open Tasks
 
 All unresolved tasks across the vault.
@@ -83,7 +84,13 @@ sort by due
 group by path
 \`\`\`
 `;
+var ONOTE_DASHBOARD_START = "<!-- ONOTE_DASHBOARD_START -->";
+var ONOTE_DASHBOARD_END = "<!-- ONOTE_DASHBOARD_END -->";
 var OnotePlugin = class extends import_obsidian.Plugin {
+  constructor() {
+    super(...arguments);
+    this.programNoteFactsCache = /* @__PURE__ */ new Map();
+  }
   async onload() {
     await this.loadSettings();
     await this.ensureOpenTasksDashboard();
@@ -99,6 +106,20 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       name: "Execute Current Action Plan",
       callback: async () => {
         await this.executeCurrentActionPlan();
+      }
+    });
+    this.addCommand({
+      id: "refresh-program-dashboard",
+      name: "Refresh Program Dashboard",
+      callback: async () => {
+        await this.refreshProgramDashboardFromContext();
+      }
+    });
+    this.addCommand({
+      id: "refresh-all-program-dashboards",
+      name: "Refresh All Program Dashboards",
+      callback: async () => {
+        await this.refreshAllProgramDashboards();
       }
     });
     this.addSettingTab(new OnoteSettingTab(this.app, this));
@@ -122,8 +143,11 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       }
       const record = item;
       const name = this.asString(record.name);
-      const acronyms = Array.isArray(record.acronyms) ? record.acronyms.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean) : [];
-      return name ? { name, acronyms } : null;
+      const singularAcronym = this.asString(record.acronym);
+      const acronyms = Array.isArray(record.acronyms) ? record.acronyms.filter((entry) => typeof entry === "string").map((entry) => entry.trim()).filter(Boolean) : singularAcronym ? [singularAcronym] : [];
+      const folderPath = this.asString(record.folderPath) || `${this.resolveProgramsRoot()}/${this.sanitizeFileName(name)}`;
+      const dashboardEnabled = typeof record.dashboardEnabled === "boolean" ? record.dashboardEnabled : true;
+      return name ? { name, acronyms, folderPath, dashboardEnabled } : null;
     }).filter((item) => item !== null);
     return programs.length > 0 ? programs : DEFAULT_PROGRAMS;
   }
@@ -343,27 +367,45 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     await this.app.vault.create(category.homePagePath, content);
   }
   async ensureProgramHomePage(programName) {
-    const programsRoot = this.resolveProgramsRoot();
-    const folderPath = `${programsRoot}/${this.sanitizeFileName(programName)}`;
+    const program = this.getProgramConfig(programName);
+    const folderPath = program?.folderPath || `${this.resolveProgramsRoot()}/${this.sanitizeFileName(programName)}`;
     await this.ensureFolderExists(folderPath);
     const homePath = `${folderPath}/${this.sanitizeFileName(programName)}.md`;
     const existing = this.app.vault.getAbstractFileByPath(homePath);
     if (!(existing instanceof import_obsidian.TFile)) {
-      const content = [
-        `# ${programName}`,
-        "",
-        "## Purpose",
-        "",
-        "_Program home page._",
-        "",
-        "## Recent Notes",
-        "",
-        "## Related Topics",
-        ""
-      ].join("\n");
+      const content = this.buildInitialProgramDashboard(programName);
       await this.app.vault.create(homePath, content);
     }
     return homePath;
+  }
+  buildInitialProgramDashboard(programName) {
+    const refreshedAt = (/* @__PURE__ */ new Date()).toISOString();
+    return [
+      "---",
+      "onote_type: program_dashboard",
+      `program: "${this.escapeYamlString(programName)}"`,
+      `last_refreshed: "${refreshedAt}"`,
+      "---",
+      "",
+      `# ${programName}`,
+      "",
+      "## Status",
+      "",
+      "Status: Unknown",
+      "",
+      `Last Updated: ${this.formatDisplayTimestamp(refreshedAt)}`,
+      "",
+      "---",
+      "",
+      ONOTE_DASHBOARD_START,
+      "",
+      "## Current Status",
+      "",
+      "_Refresh dashboard to generate program summary._",
+      "",
+      ONOTE_DASHBOARD_END,
+      ""
+    ].join("\n");
   }
   async resolveDerivativeFolder(plan, category) {
     if (plan.folder) {
@@ -371,7 +413,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       return plan.folder;
     }
     if (category.name.toLowerCase() === "programs" && plan.relatedPrograms.length > 0) {
-      const folder = `${this.resolveProgramsRoot()}/${this.sanitizeFileName(plan.relatedPrograms[0])}`;
+      const folder = this.getProgramFolderPath(plan.relatedPrograms[0]);
       await this.ensureFolderExists(folder);
       return folder;
     }
@@ -414,6 +456,245 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     await this.ensureFolderExists(ACTION_PLANS_COMPLETED_FOLDER);
     await this.app.fileManager.renameFile(planFile, completedActionPlanPath);
     return `Action plan moved to ${completedActionPlanPath}.`;
+  }
+  async refreshProgramDashboardFromContext() {
+    const activeFile = this.app.workspace.getActiveFile();
+    const programName = activeFile ? await this.inferProgramFromFile(activeFile) : "";
+    if (!programName) {
+      new import_obsidian.Notice("Onote: could not determine a single program from the current note.", 6e3);
+      return;
+    }
+    await this.refreshProgramDashboard(programName);
+  }
+  async refreshAllProgramDashboards() {
+    const enabledPrograms = this.settings.programs.filter((program) => program.dashboardEnabled !== false);
+    if (enabledPrograms.length === 0) {
+      new import_obsidian.Notice("Onote: no dashboard-enabled programs configured.", 5e3);
+      return;
+    }
+    this.programNoteFactsCache.clear();
+    for (const program of enabledPrograms) {
+      await this.refreshProgramDashboard(program.name, false);
+    }
+    new import_obsidian.Notice(`Onote: refreshed ${enabledPrograms.length} program dashboards.`, 7e3);
+  }
+  async refreshProgramDashboard(programName, announce = true) {
+    const canonicalProgramName = this.normalizeProgramList([programName])[0] || programName;
+    const dashboardPath = await this.ensureProgramHomePage(canonicalProgramName);
+    const dashboardFile = this.app.vault.getAbstractFileByPath(dashboardPath);
+    if (!(dashboardFile instanceof import_obsidian.TFile)) {
+      throw new Error(`Program dashboard file could not be created for ${canonicalProgramName}.`);
+    }
+    const relatedNotes = await this.discoverProgramNotes(canonicalProgramName);
+    const refreshedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const generatedBlock = this.buildProgramDashboardGeneratedBlock(canonicalProgramName, relatedNotes, refreshedAt);
+    const existingContent = await this.app.vault.read(dashboardFile);
+    const updatedContent = this.upsertProgramDashboardContent(existingContent, canonicalProgramName, refreshedAt, generatedBlock);
+    await this.app.vault.modify(dashboardFile, updatedContent);
+    if (announce) {
+      new import_obsidian.Notice(`Onote: refreshed ${canonicalProgramName} dashboard.`, 6e3);
+    }
+  }
+  async inferProgramFromFile(file) {
+    const frontmatterProgram = this.readFrontmatterValue(await this.app.vault.read(file), "program");
+    if (frontmatterProgram) {
+      return frontmatterProgram;
+    }
+    const facts = await this.getProgramDashboardNoteFacts(file);
+    const programs = this.uniquePreservingOrder([...facts.programs, ...facts.relatedPrograms]);
+    return programs.length === 1 ? programs[0] : "";
+  }
+  async discoverProgramNotes(programName) {
+    const program = this.getProgramConfig(programName);
+    const canonicalProgramName = program?.name || programName;
+    const programTag = this.sanitizeTagToken(canonicalProgramName);
+    const programFolder = program?.folderPath || `${this.resolveProgramsRoot()}/${this.sanitizeFileName(canonicalProgramName)}`;
+    const acronymSet = new Set([canonicalProgramName, ...program?.acronyms ?? []].map((entry) => entry.toLowerCase()));
+    const files = this.app.vault.getMarkdownFiles().filter((file) => !this.isAIContextFile(file.path)).filter((file) => !this.isAcronymFile(file.path)).filter((file) => !this.isTrackerFile(file.path));
+    const related = [];
+    for (const file of files) {
+      const facts = await this.getProgramDashboardNoteFacts(file);
+      const joined = [facts.content, ...facts.wikiLinks, ...facts.tags].join("\n").toLowerCase();
+      const hasProgramFrontmatter = facts.programs.some((entry) => entry.toLowerCase() === canonicalProgramName.toLowerCase());
+      const hasRelatedSection = facts.relatedPrograms.some((entry) => entry.toLowerCase() === canonicalProgramName.toLowerCase());
+      const hasProgramLink = facts.wikiLinks.some((entry) => entry.toLowerCase() === canonicalProgramName.toLowerCase());
+      const hasProgramTag = facts.tags.some((entry) => this.sanitizeTagToken(entry) === programTag);
+      const hasProgramAcronym = [...acronymSet].some((entry) => {
+        const pattern = new RegExp(`(^|[^A-Za-z0-9])${this.escapeRegex(entry)}([^A-Za-z0-9]|$)`, "i");
+        return pattern.test(joined);
+      });
+      const isInsideProgramFolder = file.path.startsWith(`${programFolder}/`);
+      if (hasProgramFrontmatter || hasRelatedSection || hasProgramLink || hasProgramTag || hasProgramAcronym || isInsideProgramFolder) {
+        related.push(facts);
+      }
+    }
+    return related.sort((a, b) => b.modifiedAt - a.modifiedAt || a.file.path.localeCompare(b.file.path));
+  }
+  async getProgramDashboardNoteFacts(file) {
+    const cached = this.programNoteFactsCache.get(file.path);
+    if (cached) {
+      return cached;
+    }
+    const content = await this.app.vault.read(file);
+    const facts = {
+      file,
+      content,
+      programs: this.readYamlArray(content, "programs"),
+      relatedPrograms: this.extractSectionList(content, "Related Programs").map((entry) => this.extractWikiLinkTitle(entry)),
+      wikiLinks: this.extractWikiLinks(content),
+      tags: this.extractTags(content),
+      tasks: this.extractTasksFromContent(content),
+      risks: this.collectRisksFromContent(content),
+      decisions: this.extractSectionList(content, "Decisions"),
+      strategyThemes: this.extractSectionList(content, "Strategy Recommendations"),
+      summary: this.extractSummaryForDashboard(content),
+      isActionPlan: this.readFrontmatterValue(content, "onote_type") === "action_plan",
+      isDerivative: this.readFrontmatterValue(content, "onote_type") === "derivative_note",
+      modifiedAt: this.getFileModifiedAt(file)
+    };
+    this.programNoteFactsCache.set(file.path, facts);
+    return facts;
+  }
+  buildProgramDashboardGeneratedBlock(programName, notes, refreshedAt) {
+    const recentNotes = this.uniqueNoteLinks(notes).slice(0, 5);
+    const highlights = this.collectProgramHighlights(notes).slice(0, 5);
+    const risks = this.uniquePreservingOrder(notes.flatMap((note) => note.risks)).slice(0, 5);
+    const decisions = this.uniquePreservingOrder(notes.flatMap((note) => note.decisions)).slice(0, 5);
+    const themes = this.uniquePreservingOrder(notes.flatMap((note) => note.strategyThemes)).slice(0, 5);
+    const status = this.calculateProgramStatus(notes, risks);
+    const indicators = this.buildProgramHealthIndicators(notes, risks);
+    return [
+      ONOTE_DASHBOARD_START,
+      "",
+      "```meta-bind-button",
+      `label: Refresh Dashboard`,
+      "actions:",
+      `  - type: command`,
+      `    command: ${REFRESH_PROGRAM_DASHBOARD_COMMAND}`,
+      "```",
+      "",
+      "## Current Status",
+      "",
+      this.buildCurrentStatusSynthesis(programName, notes, status, risks),
+      "",
+      "<details open>",
+      "<summary>Recent Highlights</summary>",
+      "",
+      "## Recent Highlights",
+      "",
+      ...highlights.length > 0 ? highlights.map((item) => `- ${item}`) : ["- No recent highlights yet."],
+      "",
+      "</details>",
+      "",
+      "<details open>",
+      "<summary>Current Risks</summary>",
+      "",
+      "## Current Risks",
+      "",
+      ...risks.length > 0 ? risks.map((item) => `- ${item}`) : ["- No current risks captured."],
+      "",
+      "</details>",
+      "",
+      "<details open>",
+      "<summary>Open Actions</summary>",
+      "",
+      "## Open Actions",
+      "",
+      "```tasks",
+      "not done",
+      `path includes "${this.getProgramFolderPath(programName)}"`,
+      "sort by due",
+      "```",
+      "",
+      "</details>",
+      "",
+      "## Recent Decisions",
+      "",
+      ...decisions.length > 0 ? decisions.map((item) => `- ${item}`) : ["- No recent decisions captured."],
+      "",
+      "## Strategic Themes",
+      "",
+      ...themes.length > 0 ? themes.map((item) => `- ${item}`) : ["- No strategic themes captured."],
+      "",
+      "<details open>",
+      "<summary>Recent Notes</summary>",
+      "",
+      "## Recent Notes",
+      "",
+      ...recentNotes.length > 0 ? recentNotes.map((item) => `- ${item}`) : ["- No recent notes found."],
+      "",
+      "</details>",
+      "",
+      "## Program Health Indicators",
+      "",
+      "| Area | Status | Notes |",
+      "| --- | --- | --- |",
+      ...indicators.map((indicator) => `| ${indicator.area} | ${indicator.status} | ${indicator.notes} |`),
+      "",
+      "## Trends",
+      "",
+      this.buildTrendSummary(notes, risks, status),
+      "",
+      ONOTE_DASHBOARD_END
+    ].join("\n");
+  }
+  upsertProgramDashboardContent(existingContent, programName, refreshedAt, generatedBlock) {
+    const manualBody = this.replaceOrAppendDashboardBlock(existingContent, generatedBlock);
+    const frontmatter = [
+      "---",
+      "onote_type: program_dashboard",
+      `program: "${this.escapeYamlString(programName)}"`,
+      `last_refreshed: "${refreshedAt}"`,
+      "---"
+    ].join("\n");
+    const bodyWithoutFrontmatter = manualBody.replace(/^---\n[\s\S]*?\n---\n*/m, "");
+    const updatedStatus = this.replaceDashboardStatusHeader(bodyWithoutFrontmatter, generatedBlock, refreshedAt);
+    return `${frontmatter}
+
+${updatedStatus.trimStart()}`;
+  }
+  replaceOrAppendDashboardBlock(existingContent, generatedBlock) {
+    if (existingContent.includes(ONOTE_DASHBOARD_START) && existingContent.includes(ONOTE_DASHBOARD_END)) {
+      return existingContent.replace(
+        new RegExp(`${this.escapeRegex(ONOTE_DASHBOARD_START)}[\\s\\S]*?${this.escapeRegex(ONOTE_DASHBOARD_END)}`),
+        generatedBlock
+      );
+    }
+    return `${existingContent.trimEnd()}
+
+${generatedBlock}
+`;
+  }
+  replaceDashboardStatusHeader(content, generatedBlock, refreshedAt) {
+    const calculatedStatus = this.extractProgramStatusFromGeneratedBlock(generatedBlock);
+    const header = [
+      `# ${this.extractDashboardTitle(content)}`,
+      "",
+      "## Status",
+      "",
+      `Status: ${calculatedStatus}`,
+      "",
+      `Last Updated: ${this.formatDisplayTimestamp(refreshedAt)}`,
+      "",
+      "---"
+    ].join("\n");
+    if (/^# .+\n\n## Status\n[\s\S]*?\n---/m.test(content)) {
+      return content.replace(/^# .+\n\n## Status\n[\s\S]*?\n---/m, header);
+    }
+    const body = content.replace(/^# .+\n*/, "").trimStart();
+    return `${header}
+
+${body}`;
+  }
+  extractProgramStatusFromGeneratedBlock(generatedBlock) {
+    if (/Delivery blockers and risks are concentrated/i.test(generatedBlock)) return "Red";
+    if (/Moderate uncertainty remains/i.test(generatedBlock)) return "Yellow";
+    if (/Recent notes indicate healthy momentum/i.test(generatedBlock)) return "Green";
+    return "Unknown";
+  }
+  extractDashboardTitle(content) {
+    const match = content.match(/^# (.+)$/m);
+    return match?.[1]?.trim() || "Program Dashboard";
   }
   getRelatedMarkdownNotes(currentFile) {
     return this.app.vault.getMarkdownFiles().filter((file) => file.path !== currentFile.path).filter((file) => !this.isActionPlanPath(file.path)).filter((file) => !this.isAIContextFile(file.path)).filter((file) => !this.isAcronymFile(file.path)).filter((file) => !this.isTrackerFile(file.path)).filter((file) => !this.isTemporaryOrTimestampArtifact(file)).map((file) => ({ title: file.basename, path: file.path })).sort((a, b) => `${a.path}`.localeCompare(`${b.path}`));
@@ -665,7 +946,9 @@ Rule: Do not rewrite PIPE as pipeline.
     return this.normalizeActionPlan(this.parseJson(content));
   }
   buildPrompt(file, noteContent, relatedNotes, aiContext) {
-    const configuredPrograms = this.settings.programs.map((program) => `${program.name}${program.acronyms.length > 0 ? ` (${program.acronyms.join(", ")})` : ""}`).join(", ");
+    const configuredPrograms = this.settings.programs.map(
+      (program) => `${program.name}${program.acronyms.length > 0 ? ` (${program.acronyms.join(", ")})` : ""} -> ${program.folderPath}`
+    ).join(", ");
     const configuredCategories = this.settings.categories.map((category) => `${category.name}: ${category.folderPath} - ${category.description}`).join("\n");
     const linkCandidates = relatedNotes.length > 0 ? relatedNotes.slice(0, 200).map((note) => `${note.title}${note.path ? ` (${note.path})` : ""}`).join(", ") : "None provided";
     return [
@@ -1015,6 +1298,151 @@ Rule: Do not rewrite PIPE as pipeline.
     return /(ownership|organization|org chart|product|solutions|pm layer|operational readiness|customer promise|structure|boundary|operating model)/i.test(
       combined
     );
+  }
+  getProgramConfig(programName) {
+    return this.settings.programs.find((program) => program.name.toLowerCase() === programName.toLowerCase());
+  }
+  getProgramFolderPath(programName) {
+    return this.getProgramConfig(programName)?.folderPath || `${this.resolveProgramsRoot()}/${this.sanitizeFileName(programName)}`;
+  }
+  readYamlArray(content, key) {
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!frontmatterMatch) {
+      return [];
+    }
+    const blockPattern = new RegExp(`^${this.escapeRegex(key)}:\\s*\\n((?:\\s+-\\s+.*\\n?)*)`, "m");
+    const inlinePattern = new RegExp(`^${this.escapeRegex(key)}:\\s*\\[(.*?)\\]\\s*$`, "m");
+    const blockMatch = frontmatterMatch[1].match(blockPattern);
+    if (blockMatch?.[1]) {
+      return blockMatch[1].split("\n").map((line) => line.trim()).filter((line) => line.startsWith("- ")).map((line) => line.slice(2).trim().replace(/^"|"$/g, "")).filter(Boolean);
+    }
+    const inlineMatch = frontmatterMatch[1].match(inlinePattern);
+    if (inlineMatch?.[1]) {
+      return inlineMatch[1].split(",").map((entry) => entry.trim().replace(/^"|"$/g, "")).filter(Boolean);
+    }
+    return [];
+  }
+  extractWikiLinks(content) {
+    const matches = [...content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)];
+    return this.uniquePreservingOrder(matches.map((match) => match[1].trim()).filter(Boolean));
+  }
+  extractTags(content) {
+    const matches = [...content.matchAll(/(^|\s)#([A-Za-z0-9/_-]+)/g)];
+    return this.uniquePreservingOrder(matches.map((match) => match[2].trim()).filter(Boolean));
+  }
+  extractTasksFromContent(content) {
+    return content.split("\n").map((line) => line.trim()).filter((line) => /^\-\s\[[ xX]\]\s+/.test(line)).map((line) => this.sanitizeTaskText(line)).filter(Boolean);
+  }
+  collectRisksFromContent(content) {
+    const listedRisks = this.extractSectionList(content, "Risks");
+    const inlineRisks = content.split("\n").map((line) => line.trim()).filter((line) => /(risk|blocker|unclear|fuzzy|missing|delay|delayed|tribal knowledge|no dates|uncertainty)/i.test(line)).filter((line) => !line.startsWith("#")).map((line) => line.replace(/^\-\s*/, "")).filter(Boolean);
+    return this.uniquePreservingOrder([...listedRisks, ...inlineRisks]);
+  }
+  extractSummaryForDashboard(content) {
+    const sectionSummary = this.extractSectionText(content, "Summary");
+    if (sectionSummary) {
+      return sectionSummary;
+    }
+    const lines = content.split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !line.startsWith("#")).filter((line) => !line.startsWith("```")).filter((line) => !line.startsWith("- [")).filter((line) => !line.startsWith("- "));
+    return lines.slice(0, 3).join(" ");
+  }
+  getFileModifiedAt(file) {
+    const statMtime = file.stat?.mtime;
+    if (typeof statMtime === "number") {
+      return statMtime;
+    }
+    const timestampMatch = file.basename.match(/^(\d{4}-\d{2}-\d{2}) (\d{4})/);
+    if (timestampMatch) {
+      return (/* @__PURE__ */ new Date(`${timestampMatch[1]}T${timestampMatch[2].slice(0, 2)}:${timestampMatch[2].slice(2, 4)}:00`)).getTime();
+    }
+    return 0;
+  }
+  uniqueNoteLinks(notes) {
+    return this.uniquePreservingOrder(notes.map((note) => `[[${this.app.metadataCache.fileToLinktext(note.file, "", true)}]]`));
+  }
+  collectProgramHighlights(notes) {
+    const recentNotes = notes.slice(0, 8);
+    const highlights = recentNotes.flatMap(
+      (note) => note.summary.split("\n").map((line) => line.trim()).filter(Boolean).map((line) => line.replace(/^\-\s*/, ""))
+    );
+    return this.uniquePreservingOrder(highlights.filter((line) => line.length > 10));
+  }
+  calculateProgramStatus(notes, risks) {
+    if (notes.length < 2) {
+      return "Unknown";
+    }
+    const openTaskCount = notes.reduce(
+      (total, note) => total + note.content.split("\n").filter((line) => /^\-\s\[ \]\s+/.test(line.trim())).length,
+      0
+    );
+    const redSignals = risks.filter((risk) => /(blocker|missing|unclear|no dates|delay|risk|tribal knowledge|weak)/i.test(risk)).length;
+    if (redSignals >= 4 || redSignals >= 3 && openTaskCount >= 4) {
+      return "Red";
+    }
+    if (redSignals >= 2 || openTaskCount >= 2) {
+      return "Yellow";
+    }
+    return "Green";
+  }
+  buildCurrentStatusSynthesis(programName, notes, status, risks) {
+    if (status === "Red") {
+      return `${programName} is currently Red. Delivery blockers and risks are concentrated around ${risks.slice(0, 2).join(" and ") || "program execution uncertainty"}.`;
+    }
+    if (status === "Yellow") {
+      return `${programName} is currently Yellow. Moderate uncertainty remains across delivery clarity, ownership, and follow-through in recent notes.`;
+    }
+    if (status === "Green") {
+      return `${programName} is currently Green. Recent notes indicate healthy momentum with limited unresolved issues.`;
+    }
+    return `${programName} status is Unknown. There are not yet enough program-linked notes to infer reliable health.`;
+  }
+  buildProgramHealthIndicators(notes, risks) {
+    const combined = notes.map((note) => note.content).join("\n");
+    const has = (pattern) => pattern.test(combined) || risks.some((risk) => pattern.test(risk));
+    const indicator = (area, pattern, redPattern) => {
+      if (redPattern && (redPattern.test(combined) || risks.some((risk) => redPattern.test(risk)))) {
+        return { area, status: "Red", notes: this.firstMatchingSnippet(combined, redPattern) };
+      }
+      if (has(pattern)) {
+        return { area, status: "Yellow", notes: this.firstMatchingSnippet(combined, pattern) };
+      }
+      return { area, status: "Green", notes: "No major issues highlighted in recent notes." };
+    };
+    return [
+      indicator("Delivery", /(release|roadmap|delivery|authority|rollback|pipe)/i, /(release authority|rollback|delivery uncertainty|blocker)/i),
+      indicator("Staffing", /(staffing|transition|resourcing)/i, /(no dates|staffing plan|missing dates|transition)/i),
+      indicator("Customer Alignment", /(pmo|customer|confidence|promise)/i, /(pmo outcomes vague|customer promise|confidence)/i),
+      indicator("Technical Clarity", /(tribal knowledge|data flow|technical|ops readiness)/i, /(tribal knowledge|full data flow|ops readiness)/i),
+      indicator("Organizational Support", /(pm layer|product|solutions|ownership|coach|coaching)/i, /(pm layer weak|ownership|conflict avoidance)/i)
+    ];
+  }
+  firstMatchingSnippet(content, pattern) {
+    const line = content.split("\n").map((entry) => entry.trim()).find((entry) => pattern.test(entry));
+    return line || "Recent notes suggest attention is needed here.";
+  }
+  buildTrendSummary(notes, risks, status) {
+    if (status === "Red") {
+      return "Declining: unresolved risks and ownership gaps are accumulating faster than the notes show closure.";
+    }
+    if (status === "Yellow") {
+      return "Mixed: progress is happening, but delivery clarity and ownership questions are still open.";
+    }
+    if (status === "Green") {
+      return "Improving: recent notes suggest momentum with fewer blockers and clearer follow-through.";
+    }
+    return `Stable but unclear: only ${notes.length} related note${notes.length === 1 ? "" : "s"} were found, so trend confidence is low.`;
+  }
+  formatDisplayTimestamp(value) {
+    const date = new Date(value);
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, "0");
+    const day = `${date.getDate()}`.padStart(2, "0");
+    const hours = `${date.getHours()}`.padStart(2, "0");
+    const minutes = `${date.getMinutes()}`.padStart(2, "0");
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  }
+  sanitizeTagToken(value) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
   asSuggestedLinks(value) {
     if (!Array.isArray(value)) {
@@ -1451,7 +1879,7 @@ ${body}`;
   resolveDefaultFolderForDerivative(note) {
     const category = this.settings.categories.find((entry) => entry.name.toLowerCase() === note.category.toLowerCase());
     if (note.category.toLowerCase() === "programs" && note.relatedPrograms.length > 0) {
-      return `${this.resolveProgramsRoot()}/${this.sanitizeFileName(note.relatedPrograms[0])}`;
+      return this.getProgramFolderPath(note.relatedPrograms[0]);
     }
     return category?.folderPath || this.sanitizeFileName(note.category);
   }
