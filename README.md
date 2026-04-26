@@ -84,6 +84,9 @@ When you run `Execute Current Action Plan` with the reviewed action-plan note op
 - adds frontmatter to each derivative note
 - adds backlinks to the source note and action plan
 - keeps action items in contextual notes as native Markdown tasks
+- carries only unchecked action-plan tasks into derivative notes
+- leaves checked action-plan tasks only in the reviewed action plan
+- preserves task due-date text when present, for example `📅 2026-05-02`
 - updates delegation, strategy, and people/coaching trackers
 - ensures `Action Plans/Open Tasks.md` exists as a Tasks-query dashboard instead of a copied task tracker
 - ensures category home pages exist and appends links under `Recent Notes`
@@ -129,6 +132,14 @@ Meta Bind is optional, but recommended if you want clickable in-note buttons for
 - `Execute Current Action Plan`
 
 Without Meta Bind, the notes still work, but the button code blocks render as plain fenced text instead of interactive buttons.
+
+## Open Tasks Dashboard
+
+Onote uses `Action Plans/Open Tasks.md` as a query dashboard, not a copied task tracker.
+
+If the file is missing, Onote creates it automatically with a Tasks query block and does not overwrite it if it already exists.
+
+The dashboard requires the Obsidian Tasks plugin for live task queries. Without the Tasks plugin, the note still exists, but the query block will not render as a live task view.
 
 ## Acronym Management
 

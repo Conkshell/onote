@@ -220,7 +220,8 @@ var OnotePlugin = class extends import_obsidian.Plugin {
   async createDerivativeNotesFromPlan(sourceFile, actionPlanFile, finalActionPlanPath, plan) {
     const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
     const createdFiles = [];
-    for (const derivative of plan.derivativeNotes) {
+    const taskAssignments = this.assignUncheckedTasksToDerivatives(plan.actionItems, plan.derivativeNotes);
+    for (const [index, derivative] of plan.derivativeNotes.entries()) {
       const normalized = this.normalizeDerivativeNotePlan(derivative);
       const category = await this.ensureCategory(normalized.category);
       const folderPath = await this.resolveDerivativeFolder(normalized, category);
@@ -230,7 +231,8 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       const derivativeContent = this.buildDerivativeNoteContent(
         normalized,
         sourceFile,
-        finalActionPlanPath
+        finalActionPlanPath,
+        taskAssignments.get(index) ?? []
       );
       const derivativeFile = await this.app.vault.create(derivativePath, derivativeContent);
       createdFiles.push(derivativeFile);
@@ -260,6 +262,48 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       summaryMarkdown: this.asString(plan.summaryMarkdown),
       tags: this.asStringArray(plan.tags).map((tag) => tag.replace(/^#/, ""))
     };
+  }
+  assignUncheckedTasksToDerivatives(tasks, derivatives) {
+    const assignments = /* @__PURE__ */ new Map();
+    if (derivatives.length === 0) {
+      return assignments;
+    }
+    const openTasks = tasks.filter((task) => !task.checked);
+    for (const task of openTasks) {
+      const targetIndex = this.findBestDerivativeForTask(task.text, derivatives);
+      const existing = assignments.get(targetIndex) ?? [];
+      existing.push(task.text);
+      assignments.set(targetIndex, existing);
+    }
+    return assignments;
+  }
+  findBestDerivativeForTask(taskText, derivatives) {
+    const normalizedTask = taskText.toLowerCase();
+    let bestIndex = 0;
+    let bestScore = -1;
+    for (const [index, derivative] of derivatives.entries()) {
+      const haystack = [
+        derivative.title,
+        derivative.category,
+        derivative.folder,
+        derivative.summaryMarkdown,
+        ...derivative.relatedPrograms,
+        ...derivative.relatedOrganizations,
+        ...derivative.relatedPeople,
+        ...derivative.tags
+      ].join(" ").toLowerCase();
+      let score = 0;
+      for (const token of normalizedTask.split(/[^a-z0-9]+/).filter((token2) => token2.length > 2)) {
+        if (haystack.includes(token)) {
+          score += 1;
+        }
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
   }
   async ensureCategory(categoryName) {
     const existing = this.settings.categories.find(
@@ -657,6 +701,8 @@ Rule: Do not rewrite PIPE as pipeline.
       "- Programs configuration is authoritative for program names and acronyms.",
       "- Acronyms.md is authoritative for acronym expansion unless it records a conflict.",
       "- In derivative note summaries, spell out each acronym on first use followed by the acronym in parentheses. After first use, use the acronym.",
+      "- Prefer derivative note summary_markdown in a scannable bulleted format rather than narrative prose.",
+      "- Use short bullets, subheadings, and task bullets when helpful for fast reading.",
       "- Preserve known acronyms exactly and do not split acronyms into words.",
       "- PMO must never become PM O.",
       "- PIPE must remain PIPE and must not be rewritten as pipeline.",
@@ -912,7 +958,11 @@ Rule: Do not rewrite PIPE as pipeline.
   }
   extractSectionTasks(content, title) {
     const body = this.extractSectionBody(content, title);
-    return body.split("\n").map((line) => line.trim()).filter((line) => /^\-\s\[[ xX]\]\s+/.test(line)).map((line) => line.replace(/^\-\s\[[ xX]\]\s+/, "").trim()).filter(Boolean);
+    return body.split("\n").map((line) => line.trim()).filter((line) => /^\-\s\[[ xX]\]\s+/.test(line)).map((line) => {
+      const checked = /^\-\s\[[xX]\]\s+/.test(line);
+      const text = line.replace(/^\-\s\[[ xX]\]\s+/, "").trim();
+      return text ? { text, checked } : null;
+    }).filter((item) => item !== null);
   }
   extractSectionBody(content, title) {
     const pattern = new RegExp(`## ${this.escapeRegex(title)}\\n([\\s\\S]*?)(?=\\n## |\\n${this.escapeRegex(REVISED_NOTE_START)}|$)`);
@@ -927,7 +977,7 @@ Rule: Do not rewrite PIPE as pipeline.
     }
     return content.slice(startIndex + startMarker.length, endIndex).trim();
   }
-  buildDerivativeNoteContent(plan, sourceFile, actionPlanPath) {
+  buildDerivativeNoteContent(plan, sourceFile, actionPlanPath, actionItems) {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
     const sourceLink = `[[${this.app.metadataCache.fileToLinktext(sourceFile, "", true)}]]`;
     const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
@@ -953,6 +1003,8 @@ Rule: Do not rewrite PIPE as pipeline.
       "```",
       "",
       plan.summaryMarkdown || "_No derivative summary provided._",
+      "",
+      this.formatTaskSection("Action Items", actionItems),
       "",
       this.formatListSection("Related Programs", plan.relatedPrograms.map((item) => this.renderDurableEntityLink(item))),
       this.formatListSection("Related Organizations", plan.relatedOrganizations.map((item) => this.renderDurableEntityLink(item))),

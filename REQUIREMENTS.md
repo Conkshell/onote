@@ -260,6 +260,9 @@ Action items must:
 - render as native tasks in action-plan notes
 - render as native tasks in derivative notes when relevant
 - not be duplicated into a tracker file
+- preserve due-date text if present
+- remain only in the reviewed action plan when checked
+- be included in derivative notes only when unchecked at execution time
 
 ## AI Context
 
