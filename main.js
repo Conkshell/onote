@@ -699,8 +699,6 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       "<details open>",
       "<summary>Recent Highlights</summary>",
       "",
-      "## Recent Highlights",
-      "",
       ...highlights.length > 0 ? highlights.map((item) => `- ${item}`) : ["- No recent highlights yet."],
       "",
       "</details>",
@@ -708,16 +706,12 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       "<details open>",
       "<summary>Current Risks</summary>",
       "",
-      "## Current Risks",
-      "",
       ...risks.length > 0 ? risks.map((item) => `- ${item}`) : ["- No current risks captured."],
       "",
       "</details>",
       "",
       "<details open>",
       "<summary>Open Actions</summary>",
-      "",
-      "## Open Actions",
       "",
       "```tasks",
       "not done",
@@ -737,8 +731,6 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       "",
       "<details open>",
       "<summary>Recent Notes</summary>",
-      "",
-      "## Recent Notes",
       "",
       ...recentNotes.length > 0 ? recentNotes.map((item) => `- ${item}`) : ["- No recent notes found."],
       "",
@@ -1449,17 +1441,35 @@ Rule: Do not rewrite PIPE as pipeline.
     return content.split("\n").map((line) => line.trim()).filter((line) => /^\-\s\[[ xX]\]\s+/.test(line)).map((line) => this.sanitizeTaskText(line)).filter(Boolean);
   }
   collectRisksFromContent(content) {
-    const listedRisks = this.extractSectionList(content, "Risks");
-    const inlineRisks = content.split("\n").map((line) => line.trim()).filter((line) => /(risk|blocker|unclear|fuzzy|missing|delay|delayed|tribal knowledge|no dates|uncertainty)/i.test(line)).filter((line) => !line.startsWith("#")).map((line) => line.replace(/^\-\s*/, "")).filter(Boolean);
+    const cleaned = this.stripGeneratedDashboardNoise(this.stripFrontmatter(content));
+    const listedRisks = this.extractSectionList(cleaned, "Risks").filter((line) => !this.isBareTagLine(line));
+    const inlineRisks = cleaned.split("\n").map((line) => line.trim()).filter((line) => /(risk|blocker|unclear|fuzzy|missing|delay|delayed|tribal knowledge|no dates|uncertainty)/i.test(line)).filter((line) => !line.startsWith("#")).filter((line) => !this.isBareTagLine(line)).filter((line) => !/^(onote_type|source_note_id|source_note_path|action_plan_path|generated_at|created_at|completed_at)\s*:/i.test(line)).map((line) => line.replace(/^\-\s*/, "")).filter(Boolean);
     return this.uniquePreservingOrder([...listedRisks, ...inlineRisks]);
   }
   extractSummaryForDashboard(content) {
-    const sectionSummary = this.extractSectionText(content, "Summary");
+    const cleaned = this.stripGeneratedDashboardNoise(this.stripFrontmatter(content));
+    const sectionSummary = this.extractSectionText(cleaned, "Summary");
     if (sectionSummary) {
-      return sectionSummary;
+      return this.cleanDashboardSummaryText(sectionSummary);
     }
-    const lines = content.split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !line.startsWith("#")).filter((line) => !line.startsWith("```")).filter((line) => !line.startsWith("- [")).filter((line) => !line.startsWith("- "));
-    return lines.slice(0, 3).join(" ");
+    const currentStatus = this.extractSectionText(cleaned, "Current Status");
+    if (currentStatus) {
+      return this.cleanDashboardSummaryText(currentStatus);
+    }
+    const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !line.startsWith("#")).filter((line) => !line.startsWith("```")).filter((line) => !line.startsWith("---")).filter((line) => !line.startsWith("label:")).filter((line) => !line.startsWith("style:")).filter((line) => !line.startsWith("action:")).filter((line) => !line.startsWith("type:")).filter((line) => !line.startsWith("command:")).filter((line) => !line.startsWith("- [")).filter((line) => !/^(onote_type|source_note_id|source_note_path|action_plan_path|generated_at|created_at|completed_at)\s*:/i.test(line)).filter((line) => !this.isBareTagLine(line)).map((line) => line.replace(/^\-\s*/, "")).filter((line) => line.length > 3);
+    return this.cleanDashboardSummaryText(lines.slice(0, 3).join(" "));
+  }
+  stripFrontmatter(content) {
+    return content.replace(/^---\n[\s\S]*?\n---\n*/m, "");
+  }
+  stripGeneratedDashboardNoise(content) {
+    return content.replace(new RegExp(`${this.escapeRegex(ONOTE_DASHBOARD_START)}[\\s\\S]*?${this.escapeRegex(ONOTE_DASHBOARD_END)}`, "g"), "").replace(/<!--[\s\S]*?-->/g, "").replace(/```meta-bind-button[\s\S]*?```/g, "").replace(/<details[\s\S]*?<\/details>/g, "").trim();
+  }
+  cleanDashboardSummaryText(text) {
+    return text.split("\n").map((line) => line.trim()).filter(Boolean).filter((line) => !/^(onote_type|source_note_id|source_note_path|action_plan_path|generated_at|created_at|completed_at)\s*:/i.test(line)).filter((line) => !this.isBareTagLine(line)).map((line) => line.replace(/^\-\s*/, "")).join(" ").replace(/\s+/g, " ").trim();
+  }
+  isBareTagLine(line) {
+    return /^"?#[A-Za-z0-9/_-]+"?$/.test(line.trim());
   }
   getFileModifiedAt(file) {
     const statMtime = file.stat?.mtime;
@@ -1578,11 +1588,34 @@ Rule: Do not rewrite PIPE as pipeline.
   }
   async createActionPlanNote(sourceFile, actionPlan, sourceNoteId) {
     await this.ensureFolderExists(ACTION_PLANS_FOLDER);
+    const content = this.buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId);
+    const existingPlan = await this.findActiveActionPlanBySourceNoteId(sourceNoteId);
+    if (existingPlan) {
+      await this.app.vault.modify(existingPlan, content);
+      return existingPlan;
+    }
     const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
     const baseTitle = `${timestampPrefix} - ${this.stripTimestampPrefix(sourceFile.basename)} - Action Plan`;
     const planPath = await this.getAvailableMarkdownPath(`${ACTION_PLANS_FOLDER}/${this.sanitizeFileName(baseTitle)}.md`);
-    const content = this.buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId);
     return this.app.vault.create(planPath, content);
+  }
+  async findActiveActionPlanBySourceNoteId(sourceNoteId) {
+    if (!sourceNoteId) {
+      return null;
+    }
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const content = await this.app.vault.read(file);
+      if (this.readFrontmatterValue(content, "onote_type") !== "action_plan") {
+        continue;
+      }
+      if (this.isCompletedActionPlanContent(content)) {
+        continue;
+      }
+      if (this.readFrontmatterValue(content, "source_note_id") === sourceNoteId) {
+        return file;
+      }
+    }
+    return null;
   }
   buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId) {
     const timestamp = (/* @__PURE__ */ new Date()).toISOString();

@@ -282,6 +282,53 @@ async function main() {
   assert(dashboard, "Open Tasks dashboard was not created");
   assert(dashboard.content.includes("```tasks"), "Open Tasks dashboard is missing Tasks query");
 
+  plugin.settings.apiKey = "smoke-test-key";
+  const firstPassSource = harness.createFile(
+    "Inbox/2026-04-26 1240 - Reprocessed Source.md",
+    "# Reprocessed Source\n\nInitial raw note.\n",
+  );
+  harness.setActiveFile(firstPassSource);
+  let openAiCallCount = 0;
+  plugin.callOpenAI = async () => {
+    openAiCallCount += 1;
+    return {
+      summary: openAiCallCount === 1 ? "First pass summary." : "Second pass summary.",
+      actionItems: openAiCallCount === 1 ? ["Initial follow-up"] : ["Revised follow-up"],
+      delegations: [],
+      risks: [],
+      decisions: [],
+      strategyRecommendations: [],
+      peopleCoachingNotes: [],
+      suggestedLinks: [],
+      derivativeNotes: [],
+    };
+  };
+
+  await plugin.createActionPlanFromCurrentNote();
+  const firstPlan = harness.getLastOpened();
+  assert(firstPlan, "First processing pass did not open an action plan");
+  const firstPlanPath = firstPlan.path;
+  const firstPassSourceContent = harness.files.get("Inbox/2026-04-26 1240 - Reprocessed Source.md").content;
+  const firstPassSourceIdMatch = firstPassSourceContent.match(/onote_note_id:\s*"([^"]+)"/);
+  assert(firstPassSourceIdMatch, "First processing pass did not persist a source note ID");
+  assert(firstPlan.content.includes("First pass summary."), "First processing pass did not write the initial action plan");
+
+  await plugin.createActionPlanFromCurrentNote();
+  const secondPlan = harness.getLastOpened();
+  assert(secondPlan, "Second processing pass did not open an action plan");
+  assert(secondPlan.path === firstPlanPath, "Second processing pass created a duplicate action plan instead of reusing the existing one");
+  assert(
+    [...harness.files.keys()].filter((filePath) => /Reprocessed Source - Action Plan(?: \d+)?\.md$/.test(filePath)).length === 1,
+    "Second processing pass created more than one action plan for the same source note",
+  );
+  assert(secondPlan.content.includes("Second pass summary."), "Second processing pass did not update the existing action plan content");
+  assert(!secondPlan.content.includes("First pass summary."), "Second processing pass did not replace the previous action plan content");
+  const secondPassSourceContent = harness.files.get("Inbox/2026-04-26 1240 - Reprocessed Source.md").content;
+  const secondPassSourceIdMatch = secondPassSourceContent.match(/onote_note_id:\s*"([^"]+)"/);
+  assert(secondPassSourceIdMatch && secondPassSourceIdMatch[1] === firstPassSourceIdMatch[1], "Source note ID changed across repeated processing");
+
+  plugin.settings.apiKey = "";
+
   const sampleNote = fs.readFileSync(path.join(__dirname, "..", "test-data", "sample-source-note.md"), "utf8");
   const sourceFile = harness.createFile(
     "Inbox/2026-04-26 1254 - Mixed Topics.md",
@@ -604,6 +651,13 @@ programs:
   assert(!dashboardFile.content.includes("- [[MEGALODON]]"), "Program dashboard included itself as a recent note");
   assert(dashboardFile.content.includes("Use risk-based release framing for MEGALODON."), "Program dashboard missing recent decision");
   assert(dashboardFile.content.includes("systems integration lead or solution architect"), "Program dashboard missing strategy theme");
+  assert(!dashboardFile.content.includes('"#Risk"'), "Program dashboard should not surface bare quoted tags as risks");
+  assert(!dashboardFile.content.includes("onote_type: derivative_note"), "Program dashboard should not surface frontmatter as recent highlights");
+  assert(!dashboardFile.content.includes("onote_note_id:"), "Program dashboard should not surface source note IDs as recent highlights");
+  assert(!dashboardFile.content.includes("<summary>Recent Highlights</summary>\n\n## Recent Highlights"), "Program dashboard should not nest markdown headers inside details blocks");
+  assert(!dashboardFile.content.includes("<summary>Current Risks</summary>\n\n## Current Risks"), "Program dashboard should not nest markdown headers inside details blocks");
+  assert(!dashboardFile.content.includes("<summary>Open Actions</summary>\n\n## Open Actions"), "Program dashboard should not nest markdown headers inside details blocks");
+  assert(!dashboardFile.content.includes("<summary>Recent Notes</summary>\n\n## Recent Notes"), "Program dashboard should not nest markdown headers inside details blocks");
   assert(
     dashboardFile.content.includes("Status: Red") || dashboardFile.content.includes("Status: Yellow"),
     "Program dashboard did not calculate a non-unknown status from related notes",
