@@ -262,7 +262,8 @@ export default class OnotePlugin extends Plugin {
 			const relatedNotes = this.getRelatedMarkdownNotes(file);
 
 			new Notice("Onote: sending source note to OpenAI...");
-			const actionPlan = await this.callOpenAI(file, noteContent, relatedNotes, aiContext);
+			const rawActionPlan = await this.callOpenAI(file, noteContent, relatedNotes, aiContext);
+			const actionPlan = this.ensureDerivativeCoverage(rawActionPlan, file, noteContent);
 
 			new Notice("Onote: creating action plan note...");
 			const planFile = await this.createActionPlanNote(file, actionPlan);
@@ -970,6 +971,59 @@ Rule: Do not rewrite PIPE as pipeline.
 		};
 	}
 
+	private ensureDerivativeCoverage(actionPlan: ActionPlan, sourceFile: TFile, noteContent: string): ActionPlan {
+		const detectedPrograms = this.detectProgramsInText([
+			noteContent,
+			actionPlan.summary,
+			...actionPlan.actionItems,
+			...actionPlan.delegations,
+			...actionPlan.risks,
+			...actionPlan.strategyRecommendations,
+			...actionPlan.peopleCoachingNotes,
+			...actionPlan.suggestedLinks.map((link) => link.title),
+			...actionPlan.derivativeNotes.flatMap((note) => [
+				note.title,
+				note.summaryMarkdown,
+				...note.relatedPrograms,
+				...note.relatedOrganizations,
+				...note.relatedPeople,
+			]),
+		]);
+		const relatedPrograms = this.normalizeProgramList([
+			...detectedPrograms,
+			...actionPlan.derivativeNotes.flatMap((note) => note.relatedPrograms),
+		]);
+		const relatedOrganizations = this.collectRelatedOrganizations(actionPlan, noteContent);
+		const relatedPeople = this.collectRelatedPeople(actionPlan);
+
+		const categorySignals = [
+			relatedPrograms.length > 0 ? "Programs" : "",
+			actionPlan.peopleCoachingNotes.length > 0 ? "People" : "",
+			this.hasStrategySignal(actionPlan) ? "Strategy" : "",
+		].filter(Boolean);
+
+		if (actionPlan.derivativeNotes.length > 1 || categorySignals.length < 2) {
+			return actionPlan;
+		}
+
+		const fallbackDerivativeNotes = this.buildFallbackDerivativeNotes(
+			actionPlan,
+			sourceFile,
+			relatedPrograms,
+			relatedOrganizations,
+			relatedPeople,
+		);
+
+		if (fallbackDerivativeNotes.length <= actionPlan.derivativeNotes.length) {
+			return actionPlan;
+		}
+
+		return {
+			...actionPlan,
+			derivativeNotes: fallbackDerivativeNotes,
+		};
+	}
+
 	private asDerivativeNotes(value: unknown): DerivativeNotePlan[] {
 		if (!Array.isArray(value)) {
 			return [];
@@ -1030,6 +1084,87 @@ Rule: Do not rewrite PIPE as pipeline.
 		return result;
 	}
 
+	private buildFallbackDerivativeNotes(
+		actionPlan: ActionPlan,
+		sourceFile: TFile,
+		relatedPrograms: string[],
+		relatedOrganizations: string[],
+		relatedPeople: string[],
+	): DerivativeNotePlan[] {
+		const notes: DerivativeNotePlan[] = [];
+		const sourceTitle = this.stripTimestampPrefix(sourceFile.basename) || "Source Note";
+		const primaryProgram = relatedPrograms[0] ?? "";
+		const primaryPerson = relatedPeople[0] ?? "";
+		const primaryOrganization = relatedOrganizations[0] ?? "";
+
+		if (relatedPrograms.length > 0) {
+			const summaryBullets = this.buildBullets([
+				...this.filterRelevantItems(actionPlan.risks, /(roadmap|release|authority|rollback|staffing|program|pipe|pmo|data flow|tribal knowledge)/i),
+				...this.filterRelevantItems(actionPlan.strategyRecommendations, /(release|roadmap|program|staffing|integration|architect|deputy pm|risk-based)/i),
+				...this.filterRelevantItems(actionPlan.summary ? [actionPlan.summary] : [], /(roadmap|release|staffing|program|pipe|pmo|data flow|tribal knowledge)/i),
+			]);
+			notes.push(
+				this.normalizeDerivativeNotePlan({
+					title: primaryProgram ? `${primaryProgram} Program Roadmap and Risks` : `${sourceTitle} Program Notes`,
+					category: "Programs",
+					folder: primaryProgram ? `${this.resolveProgramsRoot()}/${this.sanitizeFileName(primaryProgram)}` : this.resolveProgramsRoot(),
+					relatedPrograms,
+					relatedOrganizations,
+					relatedPeople: this.filterRelevantItems(relatedPeople, /(Andy|Hulbs|Ben|Matt|Ryan|Eric|Tyler|Nallon|Don)/i),
+					summaryMarkdown: summaryBullets || "- Program execution, roadmap, release, and staffing signals extracted from the source note.",
+					tags: this.uniquePreservingOrder([
+						...relatedPrograms.map((program) => program.replace(/\s+/g, "-")),
+						"roadmap",
+						"release",
+						"risk",
+					]),
+				}),
+			);
+		}
+
+		if (actionPlan.peopleCoachingNotes.length > 0) {
+			const summaryBullets = this.buildBullets([
+				...actionPlan.peopleCoachingNotes,
+				...this.filterRelevantItems(actionPlan.actionItems, /(1:1|coach|coaching|ownership|avoid|worried|confidence|staffing plan)/i),
+				...this.filterRelevantItems(actionPlan.delegations, /(Ben|owner|ownership|staffing)/i),
+			]);
+			notes.push(
+				this.normalizeDerivativeNotePlan({
+					title: primaryPerson ? `${primaryPerson} Coaching and Ownership` : `${sourceTitle} Coaching and Ownership`,
+					category: "People",
+					folder: this.settings.categories.find((category) => category.name.toLowerCase() === "people")?.folderPath || "People",
+					relatedPrograms,
+					relatedOrganizations,
+					relatedPeople: primaryPerson ? [primaryPerson] : relatedPeople,
+					summaryMarkdown: summaryBullets || "- Coaching and ownership signals extracted from the source note.",
+					tags: this.uniquePreservingOrder(["coaching", "ownership", ...relatedPeople.map((person) => person.toLowerCase().replace(/\s+/g, "-"))]),
+				}),
+			);
+		}
+
+		if (this.hasStrategySignal(actionPlan)) {
+			const summaryBullets = this.buildBullets([
+				...actionPlan.strategyRecommendations,
+				...this.filterRelevantItems(actionPlan.risks, /(ownership|organization|boundary|pm layer|operational readiness|customer promise|role|structure)/i),
+				...this.filterRelevantItems(actionPlan.summary ? [actionPlan.summary] : [], /(ownership|organization|boundary|product|solutions|pm layer|operational readiness)/i),
+			]);
+			notes.push(
+				this.normalizeDerivativeNotePlan({
+					title: primaryOrganization ? `${primaryOrganization} Organizational and Ownership Design` : `${sourceTitle} Strategy and Ownership Design`,
+					category: "Strategy",
+					folder: this.settings.categories.find((category) => category.name.toLowerCase() === "strategy")?.folderPath || "Strategy",
+					relatedPrograms,
+					relatedOrganizations,
+					relatedPeople: [],
+					summaryMarkdown: summaryBullets || "- Strategy and organizational design signals extracted from the source note.",
+					tags: this.uniquePreservingOrder(["strategy", "ownership", "organization", ...relatedOrganizations.map((org) => org.toLowerCase())]),
+				}),
+			);
+		}
+
+		return notes.filter((note, index, array) => array.findIndex((candidate) => candidate.title === note.title) === index);
+	}
+
 	private asUniqueTaskArray(value: unknown): string[] {
 		const seen = new Set<string>();
 		const result: string[] = [];
@@ -1043,6 +1178,87 @@ Rule: Do not rewrite PIPE as pipeline.
 			result.push(sanitized);
 		}
 		return result;
+	}
+
+	private uniquePreservingOrder(values: string[]): string[] {
+		const seen = new Set<string>();
+		const result: string[] = [];
+		for (const value of values.map((item) => item.trim()).filter(Boolean)) {
+			const key = value.toLowerCase();
+			if (seen.has(key)) {
+				continue;
+			}
+			seen.add(key);
+			result.push(value);
+		}
+		return result;
+	}
+
+	private filterRelevantItems(items: string[], pattern: RegExp): string[] {
+		return this.uniquePreservingOrder(items.filter((item) => pattern.test(item)));
+	}
+
+	private buildBullets(items: string[]): string {
+		const uniqueItems = this.uniquePreservingOrder(items);
+		return uniqueItems.length > 0 ? uniqueItems.map((item) => `- ${item}`).join("\n") : "";
+	}
+
+	private detectProgramsInText(blocks: string[]): string[] {
+		const combined = blocks.join("\n");
+		const matches: string[] = [];
+		for (const program of this.settings.programs) {
+			const candidates = [program.name, ...program.acronyms].filter(Boolean);
+			for (const candidate of candidates) {
+				const pattern = new RegExp(`(^|[^A-Za-z0-9])${this.escapeRegex(candidate)}([^A-Za-z0-9]|$)`, "i");
+				if (pattern.test(combined)) {
+					matches.push(program.name);
+					break;
+				}
+			}
+		}
+		return this.uniquePreservingOrder(matches);
+	}
+
+	private collectRelatedOrganizations(actionPlan: ActionPlan, noteContent: string): string[] {
+		const candidates = [
+			...actionPlan.derivativeNotes.flatMap((note) => note.relatedOrganizations),
+			...actionPlan.suggestedLinks.map((link) => this.extractWikiLinkTitle(link.title)),
+		];
+		if (/\bISG\b/i.test(noteContent) || /\bISG\b/i.test(actionPlan.summary)) {
+			candidates.push("ISG");
+		}
+		return this.uniquePreservingOrder(
+			candidates.filter((item) => {
+				const title = this.extractWikiLinkTitle(item);
+				return !!title && !this.buildProgramLookup().has(title.toLowerCase()) && title.length <= 40;
+			}),
+		);
+	}
+
+	private collectRelatedPeople(actionPlan: ActionPlan): string[] {
+		const derivativePeople = actionPlan.derivativeNotes.flatMap((note) => note.relatedPeople);
+		const extractedPeople = this.uniquePreservingOrder([
+			...derivativePeople,
+			...this.extractCapitalizedNames(actionPlan.peopleCoachingNotes.join("\n")),
+			...this.extractCapitalizedNames(actionPlan.delegations.join("\n")),
+			...this.extractCapitalizedNames(actionPlan.actionItems.join("\n")),
+		]);
+		return extractedPeople.filter((item) => item.length > 1);
+	}
+
+	private extractCapitalizedNames(text: string): string[] {
+		const matches = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z]\.?)?(?:\s+[A-Z][a-z]+)?\b/g) ?? [];
+		return this.uniquePreservingOrder(matches);
+	}
+
+	private hasStrategySignal(actionPlan: ActionPlan): boolean {
+		if (actionPlan.strategyRecommendations.length > 0) {
+			return true;
+		}
+		const combined = [actionPlan.summary, ...actionPlan.risks].join("\n");
+		return /(ownership|organization|org chart|product|solutions|pm layer|operational readiness|customer promise|structure|boundary|operating model)/i.test(
+			combined,
+		);
 	}
 
 	private asSuggestedLinks(value: unknown): SuggestedLink[] {

@@ -281,6 +281,54 @@ async function main() {
     sampleNote,
   );
 
+  const expandedPlan = plugin.ensureDerivativeCoverage(
+    {
+      summary:
+        "MEGALODON roadmap meeting highlighted governance, release, staffing, coaching, and ISG ownership issues.",
+      actionItems: [
+        "Ask Hulbs what he means by tier 1",
+        "Follow up with Andy before PIPE on roadmap view",
+        "Ask Ben in next 1:1 what he is avoiding or worried about",
+      ],
+      delegations: ["Ben to send staffing plan by Wednesday."],
+      risks: [
+        "Unclear release authority and rollback impact create operational risk for MEGALODON.",
+        "Staffing plan has no real dates.",
+        "Ownership of operational readiness remains unclear.",
+      ],
+      decisions: [],
+      strategyRecommendations: [
+        "Clarify product versus solutions boundary.",
+        "Evaluate systems integration lead or solution architect role.",
+      ],
+      peopleCoachingNotes: ["Ben shows conflict avoidance and ownership hesitation."],
+      suggestedLinks: [{ title: "MEGALODON" }, { title: "ISG" }, { title: "Object Based Orchestration" }],
+      derivativeNotes: [
+        {
+          title: "MEGALODON Program Roadmap and Risks",
+          category: "Programs",
+          folder: "Programs/MEGALODON",
+          relatedPrograms: ["MEGALODON", "Object Based Orchestration"],
+          relatedOrganizations: ["ISG"],
+          relatedPeople: ["Andy", "Ben", "Hulbs"],
+          summaryMarkdown:
+            "- Governance, release, staffing, coaching, and organizational ownership signals were all mixed together in one broad derivative.",
+          tags: ["MEGALODON", "risk"],
+        },
+      ],
+    },
+    sourceFile,
+    sampleNote,
+  );
+
+  assert(expandedPlan.derivativeNotes.length >= 3, "Single broad derivative was not expanded into multiple derivative notes");
+  assert(
+    expandedPlan.derivativeNotes.some((note) => note.category === "Programs") &&
+      expandedPlan.derivativeNotes.some((note) => note.category === "People") &&
+      expandedPlan.derivativeNotes.some((note) => note.category === "Strategy"),
+    "Expanded derivative notes did not cover program, people, and strategy categories",
+  );
+
   const actionPlanContent = plugin.buildActionPlanNoteContent(sourceFile, {
     summary: "Mixed topic source note.",
     actionItems: [
