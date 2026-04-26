@@ -108,9 +108,7 @@ global.window = {
 };
 
 const OnotePlugin = require("../main.js").default;
-const EXPECTED_OPEN_TASKS_DASHBOARD = `# Open Tasks
-
-All unresolved tasks across the vault.
+const EXPECTED_OPEN_TASKS_DASHBOARD = `All unresolved tasks across the vault.
 
 ## All Open Tasks
 
@@ -245,7 +243,7 @@ async function main() {
   plugin.settings = {
     apiKey: "",
     model: "gpt-4.1-mini",
-    followUpTrackerPath: "Action Plans/Open Tasks.md",
+    actionsDashboardPath: "Actions.md",
     delegationTrackerPath: "Action Plans/Delegations.md",
     strategyTrackerPath: "Strategy/Strategy Themes.md",
     peopleCoachingTrackerPath: "People/People - Coaching.md",
@@ -280,7 +278,7 @@ async function main() {
     "Default AI context did not use configured programs",
   );
 
-  const dashboard = harness.files.get("Action Plans/Open Tasks.md");
+  const dashboard = harness.files.get("Actions.md");
   assert(dashboard, "Open Tasks dashboard was not created");
   assert(dashboard.content.includes("```tasks"), "Open Tasks dashboard is missing Tasks query");
 
@@ -407,8 +405,12 @@ async function main() {
     "Action plan did not preserve due-date task text",
   );
   assert(
-    actionPlanContent.includes("➕ 2026-04-26"),
-    "Action plan did not add created-date metadata to generated tasks",
+    !actionPlanContent.includes("➕ 2026-04-26"),
+    "Action plan should not add created-date metadata to generated tasks",
+  );
+  assert(
+    !actionPlanContent.includes("# AI Action Plan: Mixed Topics"),
+    "Action plan should not duplicate the file title in the note body",
   );
 
   const checkedActionPlanContent = actionPlanContent.replace(
@@ -434,8 +436,14 @@ async function main() {
     "Unchecked roadmap task was not carried into derivative note with due date preserved",
   );
   assert(
-    programDerivative.content.includes("➕ 2026-04-26"),
-    "Derivative note did not add created-date metadata to generated tasks",
+    !programDerivative.content.includes("➕ 2026-04-26"),
+    "Derivative note should not add created-date metadata to generated tasks",
+  );
+  assert(
+    !programDerivative.content.includes("# Roadmap Release Process") &&
+      !peopleDerivative.content.includes("# Ben Ownership Coaching") &&
+      !strategyDerivative.content.includes("# ISG Strategy Direction"),
+    "Derivative notes should not duplicate their file titles in the note body",
   );
   assert(
     (programDerivative.content.match(/Ask Hulbs what he means by tier 1/g) || []).length === 1,
@@ -461,6 +469,10 @@ async function main() {
   assert(
     !dashboard.content.includes("Follow up with Andy") && !dashboard.content.includes("Ask Hulbs"),
     "Open Tasks dashboard incorrectly contains copied tasks",
+  );
+  assert(
+    !dashboard.content.startsWith("# Open Tasks"),
+    "Open Tasks dashboard should not duplicate the file title in the note body",
   );
 
   assert(
@@ -601,30 +613,36 @@ programs:
       (dashboardFile.content.match(/ONOTE_DASHBOARD_END/g) || []).length === 1,
     "Program dashboard generated block markers were duplicated",
   );
+  assert(
+    !dashboardFile.content.includes("# MEGALODON"),
+    "Program dashboard should not duplicate the file title in the note body",
+  );
 
   const aiContextBeforeReset = await plugin.loadAIContext();
   assert(aiContextBeforeReset.includes("Program Glossary"), "AI context files were not created before reset");
+  const programGlossaryBeforeReset = harness.files.get("System/AI Context/Program Glossary.md").content;
 
   await plugin.resetOnoteDebugState();
 
-  const resetDashboard = harness.files.get("Action Plans/Open Tasks.md");
+  const resetDashboard = harness.files.get("Actions.md");
   assert(resetDashboard, "Open Tasks dashboard was not recreated after reset");
   assert(resetDashboard.content === EXPECTED_OPEN_TASKS_DASHBOARD, "Open Tasks dashboard was not reset to baseline content");
   assert(!harness.files.has("Action Plans/Delegations.md"), "Delegations tracker was not removed by debug reset");
   assert(!harness.files.has("Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"), "Completed action plan was not removed by debug reset");
   assert(!harness.files.has("Programs/MEGALODON/2026-04-26 1254 - Roadmap Release Process.md"), "Derivative note was not removed by debug reset");
   assert(!harness.files.has("Programs/MEGALODON/MEGALODON.md"), "Program dashboard was not removed by debug reset");
+  assert(!harness.files.has("People/People.md"), "Category home page was not removed by debug reset");
   assert(!harness.files.has("Archive/2026-04-26 1254 - Mixed Topics.md"), "Archived source note was not removed by debug reset");
   assert(!harness.files.has("Acronyms.md"), "Acronym file was not removed by debug reset");
-  assert(!harness.files.has("System/AI Context/Program Glossary.md"), "AI context files were not removed by debug reset");
+  assert(harness.files.has("System/AI Context/Program Glossary.md"), "Debug reset should not delete files under System/");
   assert(harness.files.has("Inbox/2026-04-26 1300 - Persistent Source.md"), "Reset removed a non-generated source note");
   assert(
     !harness.files.get("Inbox/2026-04-26 1300 - Persistent Source.md").content.includes("onote_note_id:"),
     "Reset did not clear Onote note IDs from surviving notes",
   );
   assert(
-    !harness.files.get("People/People.md").content.includes("[[2026-04-26 1254 - Ben Ownership Coaching]]"),
-    "Reset did not remove stale generated links from surviving notes",
+    harness.files.get("System/AI Context/Program Glossary.md").content === programGlossaryBeforeReset,
+    "Debug reset should not modify files under System/",
   );
 
   console.log("Smoke test passed.");

@@ -99,7 +99,7 @@ type ProgramDashboardNoteFacts = {
 interface OnoteSettings {
 	apiKey: string;
 	model: string;
-	followUpTrackerPath: string;
+	actionsDashboardPath: string;
 	delegationTrackerPath: string;
 	strategyTrackerPath: string;
 	peopleCoachingTrackerPath: string;
@@ -111,6 +111,8 @@ interface OnoteSettings {
 	programs: ProgramConfig[];
 	categories: CategoryConfig[];
 }
+
+type LoadedOnoteSettings = Partial<OnoteSettings>;
 
 const DEFAULT_PROGRAMS: ProgramConfig[] = [
 	{ name: "MEGALODON", acronyms: ["MEG"], folderPath: "Programs/MEGALODON", dashboardEnabled: true },
@@ -134,7 +136,7 @@ const DEFAULT_CATEGORIES: CategoryConfig[] = [
 const DEFAULT_SETTINGS: OnoteSettings = {
 	apiKey: "",
 	model: "gpt-4.1-mini",
-	followUpTrackerPath: "Action Plans/Open Tasks.md",
+	actionsDashboardPath: "Actions.md",
 	delegationTrackerPath: "Action Plans/Delegations.md",
 	strategyTrackerPath: "Strategy/Strategy Themes.md",
 	peopleCoachingTrackerPath: "People/People - Coaching.md",
@@ -151,7 +153,7 @@ const ACTION_PLANS_FOLDER = "Action Plans";
 const ACTION_PLANS_COMPLETED_FOLDER = "Action Plans/Completed";
 const REVISED_NOTE_START = "<!-- ONOTE_DERIVATIVE_NOTES_START -->";
 const REVISED_NOTE_END = "<!-- ONOTE_DERIVATIVE_NOTES_END -->";
-const ACRONYM_FILE_HEADER = `# Acronyms
+const ACRONYM_FILE_HEADER = `## Acronyms
 
 | Acronym | Full Name | First Seen | Source |
 |---|---|---|---|
@@ -161,9 +163,7 @@ const EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
 const REFRESH_PROGRAM_DASHBOARD_COMMAND = "onote:refresh-program-dashboard";
 const REFRESH_ALL_PROGRAM_DASHBOARDS_COMMAND = "onote:refresh-all-program-dashboards";
 const RESET_DEBUG_STATE_COMMAND = "onote:reset-debug-state";
-const OPEN_TASKS_DASHBOARD_CONTENT = `# Open Tasks
-
-All unresolved tasks across the vault.
+const OPEN_TASKS_DASHBOARD_CONTENT = `All unresolved tasks across the vault.
 
 ## All Open Tasks
 
@@ -230,8 +230,14 @@ export default class OnotePlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const loaded = await this.loadData();
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+		const loaded = (await this.loadData()) as LoadedOnoteSettings | undefined;
+		this.settings = {
+			...DEFAULT_SETTINGS,
+			...loaded,
+			actionsDashboardPath:
+				this.normalizeFilePath(loaded?.actionsDashboardPath || DEFAULT_SETTINGS.actionsDashboardPath) ||
+				DEFAULT_SETTINGS.actionsDashboardPath,
+		};
 		this.settings.programs = this.normalizePrograms(loaded?.programs ?? DEFAULT_PROGRAMS);
 		this.settings.categories = this.normalizeCategories(loaded?.categories ?? DEFAULT_CATEGORIES);
 	}
@@ -536,8 +542,6 @@ export default class OnotePlugin extends Plugin {
 			return;
 		}
 		const content = [
-			`# ${category.name}`,
-			"",
 			"## Purpose",
 			"",
 			category.description || "_Add category purpose._",
@@ -571,8 +575,6 @@ export default class OnotePlugin extends Plugin {
 			`program: "${this.escapeYamlString(programName)}"`,
 			`last_refreshed: "${refreshedAt}"`,
 			"---",
-			"",
-			`# ${programName}`,
 			"",
 			"## Status",
 			"",
@@ -791,6 +793,9 @@ export default class OnotePlugin extends Plugin {
 
 			let updatedFiles = 0;
 			for (const { file, content } of remainingFiles.values()) {
+				if (this.isSystemPath(file.path)) {
+					continue;
+				}
 				const withoutIds = this.removeFrontmatterKeys(content, ["onote_note_id"]);
 				const withoutDeletedLinks = this.removeDeletedLinksFromContent(withoutIds, deletedLinkTexts);
 				if (withoutDeletedLinks !== content) {
@@ -904,10 +909,7 @@ export default class OnotePlugin extends Plugin {
 			ONOTE_DASHBOARD_START,
 			"",
 			"```meta-bind-button",
-			`label: Refresh Dashboard`,
-			"actions:",
-			`  - type: command`,
-			`    command: ${REFRESH_PROGRAM_DASHBOARD_COMMAND}`,
+			this.buildMetaBindButton("Refresh Dashboard", REFRESH_PROGRAM_DASHBOARD_COMMAND),
 			"```",
 			"",
 			"## Current Status",
@@ -1003,8 +1005,6 @@ export default class OnotePlugin extends Plugin {
 	private replaceDashboardStatusHeader(content: string, generatedBlock: string, refreshedAt: string): string {
 		const calculatedStatus = this.extractProgramStatusFromGeneratedBlock(generatedBlock);
 		const header = [
-			`# ${this.extractDashboardTitle(content)}`,
-			"",
 			"## Status",
 			"",
 			`Status: ${calculatedStatus}`,
@@ -1018,7 +1018,11 @@ export default class OnotePlugin extends Plugin {
 			return content.replace(/^# .+\n\n## Status\n[\s\S]*?\n---/m, header);
 		}
 
-		const body = content.replace(/^# .+\n*/, "").trimStart();
+		if (/^## Status\n[\s\S]*?\n---/m.test(content)) {
+			return content.replace(/^## Status\n[\s\S]*?\n---/m, header);
+		}
+
+		const body = content.replace(/^# .+\n*/m, "").trimStart();
 		return `${header}\n\n${body}`;
 	}
 
@@ -1027,11 +1031,6 @@ export default class OnotePlugin extends Plugin {
 		if (/Moderate uncertainty remains/i.test(generatedBlock)) return "Yellow";
 		if (/Recent notes indicate healthy momentum/i.test(generatedBlock)) return "Green";
 		return "Unknown";
-	}
-
-	private extractDashboardTitle(content: string): string {
-		const match = content.match(/^# (.+)$/m);
-		return match?.[1]?.trim() || "Program Dashboard";
 	}
 
 	private getRelatedMarkdownNotes(currentFile: TFile): SuggestedLink[] {
@@ -1988,8 +1987,6 @@ Rule: Do not rewrite PIPE as pipeline.
 			`generated_at: "${this.escapeYamlString(timestamp)}"`,
 			"---",
 			"",
-			`# AI Action Plan: ${sourceFile.basename}`,
-			"",
 			"Review and edit this action plan, then run `Execute Current Action Plan` while it is open.",
 			"",
 			"## Commands",
@@ -2202,8 +2199,6 @@ Rule: Do not rewrite PIPE as pipeline.
 			this.yamlArray("tags", plan.tags.map((tag) => `#${tag.replace(/^#/, "")}`)),
 			"---",
 			"",
-			`# ${plan.title}`,
-			"",
 			"## Commands",
 			"",
 			"```meta-bind-button",
@@ -2285,7 +2280,7 @@ Rule: Do not rewrite PIPE as pipeline.
 		if (!normalizedPath || items.length === 0) {
 			return;
 		}
-		const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `# ${title}\n`);
+		const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `## ${title}\n`);
 		const existingContent = await this.app.vault.read(trackerFile);
 		const sourceLink = this.app.metadataCache.fileToLinktext(sourceFile, normalizedPath, true);
 		const markerKey = this.escapeHtmlCommentValue(sourceFile.path);
@@ -2346,7 +2341,7 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private async appendLinkUnderSection(filePath: string, sectionTitle: string, link: string): Promise<void> {
-		const file = await this.getOrCreateMarkdownFile(filePath, `# ${this.stripFileExtension(this.basenameFromPath(filePath))}\n`);
+		const file = await this.getOrCreateMarkdownFile(filePath, "");
 		const content = await this.app.vault.read(file);
 		if (content.includes(link)) {
 			return;
@@ -2367,14 +2362,22 @@ Rule: Do not rewrite PIPE as pipeline.
 
 	private shouldDeleteForDebugReset(file: TFile, content: string): boolean {
 		const normalizedPath = this.normalizeFilePath(file.path);
+		if (this.isSystemPath(normalizedPath)) {
+			return false;
+		}
+
 		const onoteType = this.readFrontmatterValue(content, "onote_type");
 		if (onoteType === "action_plan" || onoteType === "derivative_note" || onoteType === "program_dashboard") {
 			return true;
 		}
 
+		if (this.isGeneratedHomePagePath(normalizedPath)) {
+			return true;
+		}
+
 		const exactPaths = new Set(
 			[
-				this.settings.followUpTrackerPath,
+				this.settings.actionsDashboardPath,
 				this.settings.delegationTrackerPath,
 				this.settings.strategyTrackerPath,
 				this.settings.peopleCoachingTrackerPath,
@@ -2387,10 +2390,40 @@ Rule: Do not rewrite PIPE as pipeline.
 			return true;
 		}
 
-		const folders = [ACTION_PLANS_FOLDER, this.settings.aiContextFolderPath, this.settings.archiveFolderPath]
+		const folders = [ACTION_PLANS_FOLDER, this.settings.archiveFolderPath]
 			.map((folder) => this.normalizeFolder(folder))
 			.filter(Boolean);
 		return folders.some((folder) => this.isPathInsideFolder(normalizedPath, folder));
+	}
+
+	private isGeneratedHomePagePath(filePath: string): boolean {
+		const normalizedPath = this.normalizeFilePath(filePath);
+		if (!normalizedPath) {
+			return false;
+		}
+
+		const categoryHomePages = this.settings.categories
+			.map((category) => `${category.folderPath}/${this.sanitizeFileName(category.name)}.md`)
+			.map((path) => this.normalizeFilePath(path))
+			.filter(Boolean);
+		if (categoryHomePages.includes(normalizedPath)) {
+			return true;
+		}
+
+		const programHomePages = this.settings.programs
+			.map((program) => `${program.folderPath}/${this.sanitizeFileName(program.name)}.md`)
+			.map((path) => this.normalizeFilePath(path))
+			.filter(Boolean);
+		return programHomePages.includes(normalizedPath);
+	}
+
+	private isSystemPath(filePath: string): boolean {
+		const normalizedPath = this.normalizeFilePath(filePath);
+		if (!normalizedPath) {
+			return false;
+		}
+
+		return normalizedPath === "System" || this.isPathInsideFolder(normalizedPath, "System");
 	}
 
 	private async trashFile(file: TFile): Promise<void> {
@@ -2498,7 +2531,7 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private async ensureOpenTasksDashboard(): Promise<void> {
-		const dashboardPath = this.normalizeFilePath(this.settings.followUpTrackerPath);
+		const dashboardPath = this.normalizeFilePath(this.settings.actionsDashboardPath);
 		if (!dashboardPath) {
 			return;
 		}
@@ -2534,16 +2567,9 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private formatTaskSection(title: string, items: string[]): string {
-		const normalizedItems = this.asUniqueTaskArray(items).map((item) => this.appendCreatedDateToTask(item));
+		const normalizedItems = this.asUniqueTaskArray(items);
 		const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
 		return `## ${title}\n\n${body}`;
-	}
-
-	private appendCreatedDateToTask(taskText: string): string {
-		if (/➕\s*\d{4}-\d{2}-\d{2}/.test(taskText)) {
-			return taskText;
-		}
-		return `${taskText} ➕ ${window.moment().format("YYYY-MM-DD")}`;
 	}
 
 	private buildMetaBindButton(label: string, commandId: string): string {
@@ -2699,7 +2725,7 @@ Rule: Do not rewrite PIPE as pipeline.
 	private isTrackerFile(path: string): boolean {
 		const normalized = this.normalizeFilePath(path).toLowerCase();
 		return [
-			this.settings.followUpTrackerPath,
+			this.settings.actionsDashboardPath,
 			this.settings.delegationTrackerPath,
 			this.settings.strategyTrackerPath,
 			this.settings.peopleCoachingTrackerPath,
@@ -2714,14 +2740,14 @@ Rule: Do not rewrite PIPE as pipeline.
 		if (this.looksTimestampedName(basename)) {
 			return true;
 		}
-		return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+		return ["action plan", "follow-up", "actions", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
 			(marker) => path.includes(marker),
 		);
 	}
 
 	private isProcessingArtifactPath(path: string): boolean {
 		const normalized = path.toLowerCase();
-		return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+		return ["action plan", "follow-up", "actions", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
 			(marker) => normalized.includes(marker),
 		);
 	}
@@ -2816,7 +2842,7 @@ class OnoteSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		this.addPathSetting(containerEl, "Open Tasks dashboard path", "followUpTrackerPath");
+		this.addPathSetting(containerEl, "Actions dashboard path", "actionsDashboardPath");
 		this.addPathSetting(containerEl, "Delegation tracker path", "delegationTrackerPath");
 		this.addPathSetting(containerEl, "Strategy tracker path", "strategyTrackerPath");
 		this.addPathSetting(containerEl, "People / coaching tracker path", "peopleCoachingTrackerPath");
@@ -2840,7 +2866,7 @@ class OnoteSettingTab extends PluginSettingTab {
 
 	private addPathSetting(containerEl: HTMLElement, label: string, key: keyof Pick<
 		OnoteSettings,
-		| "followUpTrackerPath"
+		| "actionsDashboardPath"
 		| "delegationTrackerPath"
 		| "strategyTrackerPath"
 		| "peopleCoachingTrackerPath"

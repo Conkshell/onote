@@ -247,12 +247,12 @@ If moving/archiving fails, the plugin must not silently delete source material.
 
 Execution must update these trackers:
 
-- `Action Plans/Open Tasks.md` as a query dashboard, not a copied task tracker
+- `Actions.md` as a query dashboard, not a copied task tracker
 - `Action Plans/Delegations.md`
 - `Strategy/Strategy Themes.md`
 - `People/People - Coaching.md`
 
-Tracker updates must append new entries rather than overwrite existing content, except `Action Plans/Open Tasks.md`, which must remain a dashboard note.
+Tracker updates must append new entries rather than overwrite existing content, except `Actions.md`, which must remain a dashboard note.
 
 Action items must:
 
@@ -398,7 +398,7 @@ Decisions must only include explicit choices already made.
 The plugin must not convert:
 
 - action items
-- follow-ups
+- actions
 - coaching topics
 - questions
 - intentions

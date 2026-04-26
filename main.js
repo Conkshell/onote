@@ -47,7 +47,7 @@ var DEFAULT_CATEGORIES = [
 var DEFAULT_SETTINGS = {
   apiKey: "",
   model: "gpt-4.1-mini",
-  followUpTrackerPath: "Action Plans/Open Tasks.md",
+  actionsDashboardPath: "Actions.md",
   delegationTrackerPath: "Action Plans/Delegations.md",
   strategyTrackerPath: "Strategy/Strategy Themes.md",
   peopleCoachingTrackerPath: "People/People - Coaching.md",
@@ -63,7 +63,7 @@ var ACTION_PLANS_FOLDER = "Action Plans";
 var ACTION_PLANS_COMPLETED_FOLDER = "Action Plans/Completed";
 var REVISED_NOTE_START = "<!-- ONOTE_DERIVATIVE_NOTES_START -->";
 var REVISED_NOTE_END = "<!-- ONOTE_DERIVATIVE_NOTES_END -->";
-var ACRONYM_FILE_HEADER = `# Acronyms
+var ACRONYM_FILE_HEADER = `## Acronyms
 
 | Acronym | Full Name | First Seen | Source |
 |---|---|---|---|
@@ -71,9 +71,7 @@ var ACRONYM_FILE_HEADER = `# Acronyms
 var PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
 var EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
 var REFRESH_PROGRAM_DASHBOARD_COMMAND = "onote:refresh-program-dashboard";
-var OPEN_TASKS_DASHBOARD_CONTENT = `# Open Tasks
-
-All unresolved tasks across the vault.
+var OPEN_TASKS_DASHBOARD_CONTENT = `All unresolved tasks across the vault.
 
 ## All Open Tasks
 
@@ -134,7 +132,11 @@ var OnotePlugin = class extends import_obsidian.Plugin {
   }
   async loadSettings() {
     const loaded = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    this.settings = {
+      ...DEFAULT_SETTINGS,
+      ...loaded,
+      actionsDashboardPath: this.normalizeFilePath(loaded?.actionsDashboardPath || DEFAULT_SETTINGS.actionsDashboardPath) || DEFAULT_SETTINGS.actionsDashboardPath
+    };
     this.settings.programs = this.normalizePrograms(loaded?.programs ?? DEFAULT_PROGRAMS);
     this.settings.categories = this.normalizeCategories(loaded?.categories ?? DEFAULT_CATEGORIES);
   }
@@ -373,8 +375,6 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       return;
     }
     const content = [
-      `# ${category.name}`,
-      "",
       "## Purpose",
       "",
       category.description || "_Add category purpose._",
@@ -406,8 +406,6 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       `program: "${this.escapeYamlString(programName)}"`,
       `last_refreshed: "${refreshedAt}"`,
       "---",
-      "",
-      `# ${programName}`,
       "",
       "## Status",
       "",
@@ -592,6 +590,9 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       }
       let updatedFiles = 0;
       for (const { file, content } of remainingFiles.values()) {
+        if (this.isSystemPath(file.path)) {
+          continue;
+        }
         const withoutIds = this.removeFrontmatterKeys(content, ["onote_note_id"]);
         const withoutDeletedLinks = this.removeDeletedLinksFromContent(withoutIds, deletedLinkTexts);
         if (withoutDeletedLinks !== content) {
@@ -688,10 +689,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       ONOTE_DASHBOARD_START,
       "",
       "```meta-bind-button",
-      `label: Refresh Dashboard`,
-      "actions:",
-      `  - type: command`,
-      `    command: ${REFRESH_PROGRAM_DASHBOARD_COMMAND}`,
+      this.buildMetaBindButton("Refresh Dashboard", REFRESH_PROGRAM_DASHBOARD_COMMAND),
       "```",
       "",
       "## Current Status",
@@ -789,8 +787,6 @@ ${generatedBlock}
   replaceDashboardStatusHeader(content, generatedBlock, refreshedAt) {
     const calculatedStatus = this.extractProgramStatusFromGeneratedBlock(generatedBlock);
     const header = [
-      `# ${this.extractDashboardTitle(content)}`,
-      "",
       "## Status",
       "",
       `Status: ${calculatedStatus}`,
@@ -802,7 +798,10 @@ ${generatedBlock}
     if (/^# .+\n\n## Status\n[\s\S]*?\n---/m.test(content)) {
       return content.replace(/^# .+\n\n## Status\n[\s\S]*?\n---/m, header);
     }
-    const body = content.replace(/^# .+\n*/, "").trimStart();
+    if (/^## Status\n[\s\S]*?\n---/m.test(content)) {
+      return content.replace(/^## Status\n[\s\S]*?\n---/m, header);
+    }
+    const body = content.replace(/^# .+\n*/m, "").trimStart();
     return `${header}
 
 ${body}`;
@@ -812,10 +811,6 @@ ${body}`;
     if (/Moderate uncertainty remains/i.test(generatedBlock)) return "Yellow";
     if (/Recent notes indicate healthy momentum/i.test(generatedBlock)) return "Green";
     return "Unknown";
-  }
-  extractDashboardTitle(content) {
-    const match = content.match(/^# (.+)$/m);
-    return match?.[1]?.trim() || "Program Dashboard";
   }
   getRelatedMarkdownNotes(currentFile) {
     return this.app.vault.getMarkdownFiles().filter((file) => file.path !== currentFile.path).filter((file) => !this.isActionPlanPath(file.path)).filter((file) => !this.isAIContextFile(file.path)).filter((file) => !this.isAcronymFile(file.path)).filter((file) => !this.isTrackerFile(file.path)).filter((file) => !this.isTemporaryOrTimestampArtifact(file)).map((file) => ({ title: file.basename, path: file.path })).sort((a, b) => `${a.path}`.localeCompare(`${b.path}`));
@@ -1599,8 +1594,6 @@ Rule: Do not rewrite PIPE as pipeline.
       `generated_at: "${this.escapeYamlString(timestamp)}"`,
       "---",
       "",
-      `# AI Action Plan: ${sourceFile.basename}`,
-      "",
       "Review and edit this action plan, then run `Execute Current Action Plan` while it is open.",
       "",
       "## Commands",
@@ -1768,8 +1761,6 @@ Rule: Do not rewrite PIPE as pipeline.
       this.yamlArray("tags", plan.tags.map((tag) => `#${tag.replace(/^#/, "")}`)),
       "---",
       "",
-      `# ${plan.title}`,
-      "",
       "## Commands",
       "",
       "```meta-bind-button",
@@ -1833,7 +1824,7 @@ Rule: Do not rewrite PIPE as pipeline.
     if (!normalizedPath || items.length === 0) {
       return;
     }
-    const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `# ${title}
+    const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `## ${title}
 `);
     const existingContent = await this.app.vault.read(trackerFile);
     const sourceLink = this.app.metadataCache.fileToLinktext(sourceFile, normalizedPath, true);
@@ -1895,8 +1886,7 @@ ${lines.join("\n")}
 ${content}`;
   }
   async appendLinkUnderSection(filePath, sectionTitle, link) {
-    const file = await this.getOrCreateMarkdownFile(filePath, `# ${this.stripFileExtension(this.basenameFromPath(filePath))}
-`);
+    const file = await this.getOrCreateMarkdownFile(filePath, "");
     const content = await this.app.vault.read(file);
     if (content.includes(link)) {
       return;
@@ -1922,13 +1912,19 @@ ${content}`;
   }
   shouldDeleteForDebugReset(file, content) {
     const normalizedPath = this.normalizeFilePath(file.path);
+    if (this.isSystemPath(normalizedPath)) {
+      return false;
+    }
     const onoteType = this.readFrontmatterValue(content, "onote_type");
     if (onoteType === "action_plan" || onoteType === "derivative_note" || onoteType === "program_dashboard") {
       return true;
     }
+    if (this.isGeneratedHomePagePath(normalizedPath)) {
+      return true;
+    }
     const exactPaths = new Set(
       [
-        this.settings.followUpTrackerPath,
+        this.settings.actionsDashboardPath,
         this.settings.delegationTrackerPath,
         this.settings.strategyTrackerPath,
         this.settings.peopleCoachingTrackerPath,
@@ -1938,8 +1934,27 @@ ${content}`;
     if (exactPaths.has(normalizedPath)) {
       return true;
     }
-    const folders = [ACTION_PLANS_FOLDER, this.settings.aiContextFolderPath, this.settings.archiveFolderPath].map((folder) => this.normalizeFolder(folder)).filter(Boolean);
+    const folders = [ACTION_PLANS_FOLDER, this.settings.archiveFolderPath].map((folder) => this.normalizeFolder(folder)).filter(Boolean);
     return folders.some((folder) => this.isPathInsideFolder(normalizedPath, folder));
+  }
+  isGeneratedHomePagePath(filePath) {
+    const normalizedPath = this.normalizeFilePath(filePath);
+    if (!normalizedPath) {
+      return false;
+    }
+    const categoryHomePages = this.settings.categories.map((category) => `${category.folderPath}/${this.sanitizeFileName(category.name)}.md`).map((path) => this.normalizeFilePath(path)).filter(Boolean);
+    if (categoryHomePages.includes(normalizedPath)) {
+      return true;
+    }
+    const programHomePages = this.settings.programs.map((program) => `${program.folderPath}/${this.sanitizeFileName(program.name)}.md`).map((path) => this.normalizeFilePath(path)).filter(Boolean);
+    return programHomePages.includes(normalizedPath);
+  }
+  isSystemPath(filePath) {
+    const normalizedPath = this.normalizeFilePath(filePath);
+    if (!normalizedPath) {
+      return false;
+    }
+    return normalizedPath === "System" || this.isPathInsideFolder(normalizedPath, "System");
   }
   async trashFile(file) {
     const fileManager = this.app.fileManager;
@@ -2019,7 +2034,7 @@ ${lines.join("\n")}
     }
   }
   async ensureOpenTasksDashboard() {
-    const dashboardPath = this.normalizeFilePath(this.settings.followUpTrackerPath);
+    const dashboardPath = this.normalizeFilePath(this.settings.actionsDashboardPath);
     if (!dashboardPath) {
       return;
     }
@@ -2053,17 +2068,11 @@ ${text || "_None_"}`;
 ${body}`;
   }
   formatTaskSection(title, items) {
-    const normalizedItems = this.asUniqueTaskArray(items).map((item) => this.appendCreatedDateToTask(item));
+    const normalizedItems = this.asUniqueTaskArray(items);
     const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
     return `## ${title}
 
 ${body}`;
-  }
-  appendCreatedDateToTask(taskText) {
-    if (/➕\s*\d{4}-\d{2}-\d{2}/.test(taskText)) {
-      return taskText;
-    }
-    return `${taskText} \u2795 ${window.moment().format("YYYY-MM-DD")}`;
   }
   buildMetaBindButton(label, commandId) {
     return [`label: ${label}`, "style: primary", "action:", "  type: command", `  command: ${commandId}`].join("\n");
@@ -2186,7 +2195,7 @@ ${body}`;
   isTrackerFile(path) {
     const normalized = this.normalizeFilePath(path).toLowerCase();
     return [
-      this.settings.followUpTrackerPath,
+      this.settings.actionsDashboardPath,
       this.settings.delegationTrackerPath,
       this.settings.strategyTrackerPath,
       this.settings.peopleCoachingTrackerPath
@@ -2198,13 +2207,13 @@ ${body}`;
     if (this.looksTimestampedName(basename)) {
       return true;
     }
-    return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+    return ["action plan", "follow-up", "actions", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
       (marker) => path.includes(marker)
     );
   }
   isProcessingArtifactPath(path) {
     const normalized = path.toLowerCase();
-    return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+    return ["action plan", "follow-up", "actions", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
       (marker) => normalized.includes(marker)
     );
   }
@@ -2270,7 +2279,7 @@ var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    this.addPathSetting(containerEl, "Open Tasks dashboard path", "followUpTrackerPath");
+    this.addPathSetting(containerEl, "Actions dashboard path", "actionsDashboardPath");
     this.addPathSetting(containerEl, "Delegation tracker path", "delegationTrackerPath");
     this.addPathSetting(containerEl, "Strategy tracker path", "strategyTrackerPath");
     this.addPathSetting(containerEl, "People / coaching tracker path", "peopleCoachingTrackerPath");

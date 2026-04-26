@@ -94,7 +94,7 @@ When you run `Execute Current Action Plan` with the reviewed action-plan note op
 - leaves checked action-plan tasks only in the reviewed action plan
 - preserves task due-date text when present, for example `📅 2026-05-02`
 - updates delegation, strategy, and people/coaching trackers
-- ensures `Action Plans/Open Tasks.md` exists as a Tasks-query dashboard instead of a copied task tracker
+- ensures `Actions.md` exists as a Tasks-query dashboard instead of a copied task tracker
 - ensures category home pages exist and appends links under `Recent Notes`
 - ensures program home pages exist and appends links to relevant program notes
 - moves the source note to the configured archive folder
@@ -141,7 +141,7 @@ Without Meta Bind, the notes still work, but the button code blocks render as pl
 
 ## Open Tasks Dashboard
 
-Onote uses `Action Plans/Open Tasks.md` as a query dashboard, not a copied task tracker.
+Onote uses `Actions.md` as a query dashboard, not a copied task tracker.
 
 If the file is missing, Onote creates it automatically with a Tasks query block and does not overwrite it if it already exists.
 
