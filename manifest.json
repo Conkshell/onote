@@ -1,0 +1,10 @@
+{
+  "id": "onote",
+  "name": "Onote",
+  "version": "0.0.1",
+  "minAppVersion": "1.5.0",
+  "description": "Process the current note with OpenAI and append structured summaries plus tracker entries.",
+  "author": "jhc",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

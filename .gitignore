@@ -17,3 +17,8 @@ build/
 
 # Coverage
 coverage/
+
+# Local Obsidian vault/plugin test artifacts
+.obsidian/
+onote-test/
+onote-data/
