@@ -146,6 +146,8 @@ var ACRONYM_FILE_HEADER = `# Acronyms
 | Acronym | Full Name | First Seen | Source |
 |---|---|---|---|
 `;
+var PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
+var EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
 var OnotePlugin = class extends import_obsidian.Plugin {
   async onload() {
     await this.loadSettings();
@@ -607,6 +609,12 @@ _No revised note draft generated._`
       "",
       `Generated ${timestamp}. Review and edit this note, then run \`Execute Current Action Plan\` while it is open.`,
       "",
+      "## Commands",
+      "",
+      "```meta-bind-button",
+      this.buildMetaBindButton("Execute Current Action Plan", EXECUTE_ACTION_PLAN_COMMAND),
+      "```",
+      "",
       this.formatTextSection("Summary", actionPlan.summary || "_No summary generated._"),
       this.formatTextSection("Revised Note Title", actionPlan.revisedNoteTitle),
       this.formatListSection("Recommended Action Items", actionPlan.actionItems),
@@ -699,7 +707,16 @@ _No revised note draft generated._`
     return content.slice(startIndex + startMarker.length, endIndex).trim();
   }
   buildRevisedNoteContent(sourceFile, plan) {
-    const sections = [plan.revisedNoteMarkdown.trim()];
+    const sections = [
+      plan.revisedNoteMarkdown.trim(),
+      [
+        "## Commands",
+        "",
+        "```meta-bind-button",
+        this.buildMetaBindButton("Process Current Note with AI", PROCESS_CURRENT_NOTE_COMMAND),
+        "```"
+      ].join("\n")
+    ];
     if (plan.summary) {
       sections.push(this.formatTextSection("AI Approved Summary", plan.summary));
     }
@@ -829,6 +846,15 @@ _No revised note draft generated._`
     return `## ${title}
 
 ${text || "_None_"}`;
+  }
+  buildMetaBindButton(label, commandId) {
+    return [
+      `label: ${label}`,
+      "style: primary",
+      "action:",
+      "  type: command",
+      `  command: ${commandId}`
+    ].join("\n");
   }
   formatListSection(title, items) {
     const body = items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : "- None";

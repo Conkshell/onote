@@ -186,6 +186,8 @@ const ACRONYM_FILE_HEADER = `# Acronyms
 | Acronym | Full Name | First Seen | Source |
 |---|---|---|---|
 `;
+const PROCESS_CURRENT_NOTE_COMMAND = "onote:process-current-note-with-ai";
+const EXECUTE_ACTION_PLAN_COMMAND = "onote:execute-current-action-plan";
 
 export default class OnotePlugin extends Plugin {
 	settings!: OnoteSettings;
@@ -765,6 +767,12 @@ export default class OnotePlugin extends Plugin {
 			"",
 			`Generated ${timestamp}. Review and edit this note, then run \`Execute Current Action Plan\` while it is open.`,
 			"",
+			"## Commands",
+			"",
+			"```meta-bind-button",
+			this.buildMetaBindButton("Execute Current Action Plan", EXECUTE_ACTION_PLAN_COMMAND),
+			"```",
+			"",
 			this.formatTextSection("Summary", actionPlan.summary || "_No summary generated._"),
 			this.formatTextSection("Revised Note Title", actionPlan.revisedNoteTitle),
 			this.formatListSection("Recommended Action Items", actionPlan.actionItems),
@@ -879,7 +887,16 @@ export default class OnotePlugin extends Plugin {
 	}
 
 	private buildRevisedNoteContent(sourceFile: TFile, plan: ParsedActionPlanNote): string {
-		const sections = [plan.revisedNoteMarkdown.trim()];
+		const sections = [
+			plan.revisedNoteMarkdown.trim(),
+			[
+				"## Commands",
+				"",
+				"```meta-bind-button",
+				this.buildMetaBindButton("Process Current Note with AI", PROCESS_CURRENT_NOTE_COMMAND),
+				"```",
+			].join("\n"),
+		];
 
 		if (plan.summary) {
 			sections.push(this.formatTextSection("AI Approved Summary", plan.summary));
@@ -1036,6 +1053,16 @@ export default class OnotePlugin extends Plugin {
 
 	private formatTextSection(title: string, text: string): string {
 		return `## ${title}\n\n${text || "_None_"}`;
+	}
+
+	private buildMetaBindButton(label: string, commandId: string): string {
+		return [
+			`label: ${label}`,
+			"style: primary",
+			"action:",
+			"  type: command",
+			`  command: ${commandId}`,
+		].join("\n");
 	}
 
 	private formatListSection(title: string, items: string[]): string {

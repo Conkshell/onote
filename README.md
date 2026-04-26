@@ -84,6 +84,17 @@ Acronyms.md
 
 This file is used as vault-level acronym memory and is included in the AI context for the same processing run.
 
+## Embedded Buttons
+
+Onote-generated action plans and revised notes include embedded command buttons using the Meta Bind plugin format.
+
+Meta Bind is optional, but recommended if you want clickable in-note buttons for:
+
+- `Process Current Note with AI`
+- `Execute Current Action Plan`
+
+Without Meta Bind, the notes still work, but the button code blocks will render as plain fenced text instead of interactive buttons.
+
 ## Acronym Management
 
 Onote scans the raw note for acronym definitions in the form:
