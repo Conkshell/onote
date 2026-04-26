@@ -383,9 +383,13 @@ async function main() {
         tags: ["strategy"],
       },
     ],
-  });
+  }, "source-note-id-smoke-test");
 
   assert(actionPlanContent.includes("- [ ] Ask Hulbs what he means by tier 1"), "Action plan did not render checkbox tasks");
+  assert(
+    /source_note_id:\s*"[a-z0-9-]+"/i.test(actionPlanContent),
+    "Action plan did not include a stable source note ID",
+  );
   assert(
     !actionPlanContent.includes("- [ ] - [ ] Ask Hulbs what he means by tier 1"),
     "Action plan double-wrapped an already formatted task",
@@ -450,6 +454,7 @@ async function main() {
   const completedActionPlan = harness.files.get("Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md");
   assert(
     completedActionPlan.content.includes('source_note_path: "Archive/2026-04-26 1254 - Mixed Topics.md"') &&
+      /source_note_id:\s*"[a-z0-9-]+"/i.test(completedActionPlan.content) &&
       completedActionPlan.content.includes("completed_at:"),
     "Completed action plan did not record final source path and completion marker",
   );
@@ -459,6 +464,7 @@ async function main() {
   );
   assert(
     programDerivative.content.includes('source_note_path: "Archive/2026-04-26 1254 - Mixed Topics.md"') &&
+      /source_note_id:\s*"[a-z0-9-]+"/i.test(programDerivative.content) &&
       programDerivative.content.includes('action_plan_path: "Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"'),
     "Derivative note did not record final source/action-plan paths",
   );

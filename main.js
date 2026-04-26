@@ -90,6 +90,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.programNoteFactsCache = /* @__PURE__ */ new Map();
+    this.noteIdCache = /* @__PURE__ */ new Map();
   }
   async onload() {
     await this.loadSettings();
@@ -184,6 +185,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     }
     try {
       const noteContent = await this.app.vault.read(file);
+      const sourceNoteId = await this.ensureSourceNoteId(file, noteContent);
       await this.registerAcronymsFromNote(file, noteContent);
       const aiContext = await this.loadAIContext();
       const relatedNotes = this.getRelatedMarkdownNotes(file);
@@ -191,7 +193,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       const rawActionPlan = await this.callOpenAI(file, noteContent, relatedNotes, aiContext);
       const actionPlan = this.ensureDerivativeCoverage(rawActionPlan, file, noteContent);
       new import_obsidian.Notice("Onote: creating action plan note...");
-      const planFile = await this.createActionPlanNote(file, actionPlan);
+      const planFile = await this.createActionPlanNote(file, actionPlan, sourceNoteId);
       await this.app.workspace.getLeaf(true).openFile(planFile);
       new import_obsidian.Notice("Onote: action plan created. Review and edit it before execution.", 7e3);
     } catch (error) {
@@ -214,17 +216,19 @@ var OnotePlugin = class extends import_obsidian.Plugin {
         return;
       }
       const parsed = this.parseActionPlanNote(planContent);
-      if (!parsed.sourceNotePath) {
+      if (!parsed.sourceNotePath && !parsed.sourceNoteId) {
         new import_obsidian.Notice("Onote: this note is not a valid action plan.");
         return;
       }
       if (parsed.derivativeNotes.length === 0) {
         throw new Error("No derivative notes were parsed from Proposed Derivative Notes.");
       }
-      const sourceFile = this.resolveSourceFileForActionPlan(parsed.sourceNotePath);
+      const sourceFile = await this.resolveSourceFileForActionPlan(parsed.sourceNoteId, parsed.sourceNotePath);
       if (!sourceFile) {
-        throw new Error(`Source note not found: ${parsed.sourceNotePath}`);
+        throw new Error(`Source note not found: ${parsed.sourceNotePath || parsed.sourceNoteId}`);
       }
+      const sourceNoteContent = await this.app.vault.read(sourceFile);
+      const sourceNoteId = parsed.sourceNoteId || this.readFrontmatterValue(sourceNoteContent, "onote_note_id");
       const sourceArchivePath = await this.resolveSourceArchivePath(sourceFile);
       const completedActionPlanPath = await this.resolveCompletedActionPlanPath(planFile);
       new import_obsidian.Notice("Onote: creating derivative notes...");
@@ -232,6 +236,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
         sourceFile,
         sourceArchivePath,
         completedActionPlanPath,
+        sourceNoteId,
         parsed
       );
       new import_obsidian.Notice("Onote: updating trackers...");
@@ -252,7 +257,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       new import_obsidian.Notice(`Onote execution failed: ${message}`, 9e3);
     }
   }
-  async createDerivativeNotesFromPlan(sourceFile, finalSourceNotePath, finalActionPlanPath, plan) {
+  async createDerivativeNotesFromPlan(sourceFile, finalSourceNotePath, finalActionPlanPath, sourceNoteId, plan) {
     const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
     const createdFiles = [];
     const taskAssignments = this.assignUncheckedTasksToDerivatives(plan.actionItems, plan.derivativeNotes);
@@ -264,6 +269,7 @@ var OnotePlugin = class extends import_obsidian.Plugin {
       const derivativeContent = this.buildDerivativeNoteContent(
         normalized,
         sourceFile,
+        sourceNoteId,
         finalSourceNotePath,
         finalActionPlanPath,
         taskAssignments.get(index) ?? []
@@ -431,7 +437,13 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     const configured = this.settings.categories.find((category) => category.name.toLowerCase() === "programs");
     return configured?.folderPath || "Programs";
   }
-  resolveSourceFileForActionPlan(sourceNotePath) {
+  async resolveSourceFileForActionPlan(sourceNoteId, sourceNotePath) {
+    if (sourceNoteId) {
+      const byId = await this.findFileByNoteId(sourceNoteId);
+      if (byId) {
+        return byId;
+      }
+    }
     const direct = this.app.vault.getAbstractFileByPath(sourceNotePath);
     if (direct instanceof import_obsidian.TFile) {
       return direct;
@@ -443,6 +455,42 @@ var OnotePlugin = class extends import_obsidian.Plugin {
     const originalBaseName = this.stripFileExtension(this.basenameFromPath(sourceNotePath));
     const archivedCandidates = this.app.vault.getMarkdownFiles().filter((file) => file.path.startsWith(`${archiveFolder}/`)).filter((file) => file.basename === originalBaseName || new RegExp(`^${this.escapeRegex(originalBaseName)} \\d+$`).test(file.basename)).sort((a, b) => a.path.localeCompare(b.path));
     return archivedCandidates[0] ?? null;
+  }
+  async ensureSourceNoteId(file, content) {
+    const existing = this.readFrontmatterValue(content, "onote_note_id");
+    if (existing) {
+      this.noteIdCache.set(file.path, existing);
+      return existing;
+    }
+    const noteId = this.createNoteId();
+    const updated = this.upsertFrontmatterValues(content, {
+      onote_note_id: noteId
+    });
+    if (updated !== content) {
+      await this.app.vault.modify(file, updated);
+    }
+    this.noteIdCache.set(file.path, noteId);
+    return noteId;
+  }
+  async findFileByNoteId(noteId) {
+    if (!noteId) {
+      return null;
+    }
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const content = await this.app.vault.read(file);
+      if (this.readFrontmatterValue(content, "onote_note_id") === noteId) {
+        this.noteIdCache.set(file.path, noteId);
+        return file;
+      }
+    }
+    return null;
+  }
+  createNoteId() {
+    const cryptoObj = globalThis.crypto;
+    if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+      return cryptoObj.randomUUID();
+    }
+    return `note_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   }
   async resolveSourceArchivePath(sourceFile) {
     const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
@@ -1484,19 +1532,20 @@ Rule: Do not rewrite PIPE as pipeline.
       return null;
     }).filter((item) => item !== null).filter((item) => !item.title.startsWith("#")).filter((item) => !this.isSuggestedLinkArtifact(item));
   }
-  async createActionPlanNote(sourceFile, actionPlan) {
+  async createActionPlanNote(sourceFile, actionPlan, sourceNoteId) {
     await this.ensureFolderExists(ACTION_PLANS_FOLDER);
     const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
     const baseTitle = `${timestampPrefix} - ${this.stripTimestampPrefix(sourceFile.basename)} - Action Plan`;
     const planPath = await this.getAvailableMarkdownPath(`${ACTION_PLANS_FOLDER}/${this.sanitizeFileName(baseTitle)}.md`);
-    const content = this.buildActionPlanNoteContent(sourceFile, actionPlan);
+    const content = this.buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId);
     return this.app.vault.create(planPath, content);
   }
-  buildActionPlanNoteContent(sourceFile, actionPlan) {
+  buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId) {
     const timestamp = (/* @__PURE__ */ new Date()).toISOString();
     return [
       "---",
       'onote_type: "action_plan"',
+      `source_note_id: "${this.escapeYamlString(sourceNoteId)}"`,
       `source_note_path: "${this.escapeYamlString(sourceFile.path)}"`,
       `generated_at: "${this.escapeYamlString(timestamp)}"`,
       "---",
@@ -1562,10 +1611,12 @@ Rule: Do not rewrite PIPE as pipeline.
     ]);
   }
   parseActionPlanNote(content) {
+    const sourceNoteId = this.readFrontmatterValue(content, "source_note_id");
     const sourceNotePath = this.readFrontmatterValue(content, "source_note_path");
     const derivativeBlock = this.extractBetween(content, REVISED_NOTE_START, REVISED_NOTE_END).trim();
     const contentBeforeDerivatives = content.split(REVISED_NOTE_START)[0];
     return {
+      sourceNoteId,
       sourceNotePath,
       summary: this.extractSectionText(contentBeforeDerivatives, "Summary"),
       actionItems: this.extractSectionTasks(contentBeforeDerivatives, "Recommended Action Items"),
@@ -1649,7 +1700,7 @@ Rule: Do not rewrite PIPE as pipeline.
     }
     return content.slice(startIndex + startMarker.length, endIndex).trim();
   }
-  buildDerivativeNoteContent(plan, sourceFile, sourceNotePath, actionPlanPath, actionItems) {
+  buildDerivativeNoteContent(plan, sourceFile, sourceNoteId, sourceNotePath, actionPlanPath, actionItems) {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
     const sourceLink = `[[${this.linkTextForPath(sourceNotePath, sourceFile)}]]`;
     const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
@@ -1657,6 +1708,7 @@ Rule: Do not rewrite PIPE as pipeline.
     return [
       "---",
       "onote_type: derivative_note",
+      `source_note_id: "${this.escapeYamlString(sourceNoteId)}"`,
       `category: "${this.escapeYamlString(plan.category)}"`,
       `source_note_path: "${this.escapeYamlString(sourceNotePath)}"`,
       `action_plan_path: "${this.escapeYamlString(actionPlanPath)}"`,

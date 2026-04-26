@@ -56,6 +56,7 @@ type ActionPlan = {
 };
 
 type ParsedActionPlanNote = {
+	sourceNoteId: string;
 	sourceNotePath: string;
 	summary: string;
 	actionItems: ReviewTask[];
@@ -178,6 +179,7 @@ const ONOTE_DASHBOARD_END = "<!-- ONOTE_DASHBOARD_END -->";
 export default class OnotePlugin extends Plugin {
 	settings!: OnoteSettings;
 	private programNoteFactsCache = new Map<string, ProgramDashboardNoteFacts>();
+	private noteIdCache = new Map<string, string>();
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -304,6 +306,7 @@ export default class OnotePlugin extends Plugin {
 
 		try {
 			const noteContent = await this.app.vault.read(file);
+			const sourceNoteId = await this.ensureSourceNoteId(file, noteContent);
 			await this.registerAcronymsFromNote(file, noteContent);
 			const aiContext = await this.loadAIContext();
 			const relatedNotes = this.getRelatedMarkdownNotes(file);
@@ -313,7 +316,7 @@ export default class OnotePlugin extends Plugin {
 			const actionPlan = this.ensureDerivativeCoverage(rawActionPlan, file, noteContent);
 
 			new Notice("Onote: creating action plan note...");
-			const planFile = await this.createActionPlanNote(file, actionPlan);
+			const planFile = await this.createActionPlanNote(file, actionPlan, sourceNoteId);
 			await this.app.workspace.getLeaf(true).openFile(planFile);
 
 			new Notice("Onote: action plan created. Review and edit it before execution.", 7000);
@@ -341,7 +344,7 @@ export default class OnotePlugin extends Plugin {
 			}
 
 			const parsed = this.parseActionPlanNote(planContent);
-			if (!parsed.sourceNotePath) {
+			if (!parsed.sourceNotePath && !parsed.sourceNoteId) {
 				new Notice("Onote: this note is not a valid action plan.");
 				return;
 			}
@@ -349,10 +352,12 @@ export default class OnotePlugin extends Plugin {
 				throw new Error("No derivative notes were parsed from Proposed Derivative Notes.");
 			}
 
-			const sourceFile = this.resolveSourceFileForActionPlan(parsed.sourceNotePath);
+			const sourceFile = await this.resolveSourceFileForActionPlan(parsed.sourceNoteId, parsed.sourceNotePath);
 			if (!sourceFile) {
-				throw new Error(`Source note not found: ${parsed.sourceNotePath}`);
+				throw new Error(`Source note not found: ${parsed.sourceNotePath || parsed.sourceNoteId}`);
 			}
+			const sourceNoteContent = await this.app.vault.read(sourceFile);
+			const sourceNoteId = parsed.sourceNoteId || this.readFrontmatterValue(sourceNoteContent, "onote_note_id");
 
 			const sourceArchivePath = await this.resolveSourceArchivePath(sourceFile);
 			const completedActionPlanPath = await this.resolveCompletedActionPlanPath(planFile);
@@ -362,6 +367,7 @@ export default class OnotePlugin extends Plugin {
 				sourceFile,
 				sourceArchivePath,
 				completedActionPlanPath,
+				sourceNoteId,
 				parsed,
 			);
 
@@ -390,6 +396,7 @@ export default class OnotePlugin extends Plugin {
 		sourceFile: TFile,
 		finalSourceNotePath: string,
 		finalActionPlanPath: string,
+		sourceNoteId: string,
 		plan: ParsedActionPlanNote,
 	): Promise<TFile[]> {
 		const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
@@ -401,12 +408,13 @@ export default class OnotePlugin extends Plugin {
 			const category = await this.ensureCategory(normalized.category);
 			const folderPath = await this.resolveDerivativeFolder(normalized, category);
 			const preferredDerivativePath = `${folderPath}/${this.ensureTimestampedTitle(timestampPrefix, normalized.title)}.md`;
-			const derivativeContent = this.buildDerivativeNoteContent(
-				normalized,
-				sourceFile,
-				finalSourceNotePath,
-				finalActionPlanPath,
-				taskAssignments.get(index) ?? [],
+				const derivativeContent = this.buildDerivativeNoteContent(
+					normalized,
+					sourceFile,
+					sourceNoteId,
+					finalSourceNotePath,
+					finalActionPlanPath,
+					taskAssignments.get(index) ?? [],
 			);
 			const derivativeFile = await this.upsertDerivativeNote(preferredDerivativePath, derivativeContent, finalSourceNotePath, finalActionPlanPath);
 			createdFiles.push(derivativeFile);
@@ -597,7 +605,14 @@ export default class OnotePlugin extends Plugin {
 		return configured?.folderPath || "Programs";
 	}
 
-	private resolveSourceFileForActionPlan(sourceNotePath: string): TFile | null {
+	private async resolveSourceFileForActionPlan(sourceNoteId: string, sourceNotePath: string): Promise<TFile | null> {
+		if (sourceNoteId) {
+			const byId = await this.findFileByNoteId(sourceNoteId);
+			if (byId) {
+				return byId;
+			}
+		}
+
 		const direct = this.app.vault.getAbstractFileByPath(sourceNotePath);
 		if (direct instanceof TFile) {
 			return direct;
@@ -614,6 +629,48 @@ export default class OnotePlugin extends Plugin {
 			.filter((file) => file.basename === originalBaseName || new RegExp(`^${this.escapeRegex(originalBaseName)} \\d+$`).test(file.basename))
 			.sort((a, b) => a.path.localeCompare(b.path));
 		return archivedCandidates[0] ?? null;
+	}
+
+	private async ensureSourceNoteId(file: TFile, content: string): Promise<string> {
+		const existing = this.readFrontmatterValue(content, "onote_note_id");
+		if (existing) {
+			this.noteIdCache.set(file.path, existing);
+			return existing;
+		}
+
+		const noteId = this.createNoteId();
+		const updated = this.upsertFrontmatterValues(content, {
+			onote_note_id: noteId,
+		});
+		if (updated !== content) {
+			await this.app.vault.modify(file, updated);
+		}
+		this.noteIdCache.set(file.path, noteId);
+		return noteId;
+	}
+
+	private async findFileByNoteId(noteId: string): Promise<TFile | null> {
+		if (!noteId) {
+			return null;
+		}
+
+		for (const file of this.app.vault.getMarkdownFiles()) {
+			const content = await this.app.vault.read(file);
+			if (this.readFrontmatterValue(content, "onote_note_id") === noteId) {
+				this.noteIdCache.set(file.path, noteId);
+				return file;
+			}
+		}
+		return null;
+	}
+
+	private createNoteId(): string {
+		const cryptoObj = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto;
+		if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
+			return cryptoObj.randomUUID();
+		}
+
+		return `note_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 	}
 
 	private async resolveSourceArchivePath(sourceFile: TFile): Promise<string> {
@@ -1854,20 +1911,21 @@ Rule: Do not rewrite PIPE as pipeline.
 			.filter((item) => !this.isSuggestedLinkArtifact(item));
 	}
 
-	private async createActionPlanNote(sourceFile: TFile, actionPlan: ActionPlan): Promise<TFile> {
+	private async createActionPlanNote(sourceFile: TFile, actionPlan: ActionPlan, sourceNoteId: string): Promise<TFile> {
 		await this.ensureFolderExists(ACTION_PLANS_FOLDER);
 		const timestampPrefix = this.getSourceTimestampPrefix(sourceFile);
 		const baseTitle = `${timestampPrefix} - ${this.stripTimestampPrefix(sourceFile.basename)} - Action Plan`;
 		const planPath = await this.getAvailableMarkdownPath(`${ACTION_PLANS_FOLDER}/${this.sanitizeFileName(baseTitle)}.md`);
-		const content = this.buildActionPlanNoteContent(sourceFile, actionPlan);
+		const content = this.buildActionPlanNoteContent(sourceFile, actionPlan, sourceNoteId);
 		return this.app.vault.create(planPath, content);
 	}
 
-	private buildActionPlanNoteContent(sourceFile: TFile, actionPlan: ActionPlan): string {
+	private buildActionPlanNoteContent(sourceFile: TFile, actionPlan: ActionPlan, sourceNoteId: string): string {
 		const timestamp = new Date().toISOString();
 		return [
 			"---",
 			'onote_type: "action_plan"',
+			`source_note_id: "${this.escapeYamlString(sourceNoteId)}"`,
 			`source_note_path: "${this.escapeYamlString(sourceFile.path)}"`,
 			`generated_at: "${this.escapeYamlString(timestamp)}"`,
 			"---",
@@ -1936,10 +1994,12 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private parseActionPlanNote(content: string): ParsedActionPlanNote {
+		const sourceNoteId = this.readFrontmatterValue(content, "source_note_id");
 		const sourceNotePath = this.readFrontmatterValue(content, "source_note_path");
 		const derivativeBlock = this.extractBetween(content, REVISED_NOTE_START, REVISED_NOTE_END).trim();
 		const contentBeforeDerivatives = content.split(REVISED_NOTE_START)[0];
 		return {
+			sourceNoteId,
 			sourceNotePath,
 			summary: this.extractSectionText(contentBeforeDerivatives, "Summary"),
 			actionItems: this.extractSectionTasks(contentBeforeDerivatives, "Recommended Action Items"),
@@ -2061,6 +2121,7 @@ Rule: Do not rewrite PIPE as pipeline.
 	private buildDerivativeNoteContent(
 		plan: DerivativeNotePlan,
 		sourceFile: TFile,
+		sourceNoteId: string,
 		sourceNotePath: string,
 		actionPlanPath: string,
 		actionItems: string[],
@@ -2072,6 +2133,7 @@ Rule: Do not rewrite PIPE as pipeline.
 		return [
 			"---",
 			'onote_type: derivative_note',
+			`source_note_id: "${this.escapeYamlString(sourceNoteId)}"`,
 			`category: "${this.escapeYamlString(plan.category)}"`,
 			`source_note_path: "${this.escapeYamlString(sourceNotePath)}"`,
 			`action_plan_path: "${this.escapeYamlString(actionPlanPath)}"`,
