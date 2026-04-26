@@ -226,8 +226,8 @@ The plugin must not use an `Action Plans/Archived` folder.
 
 For source-note archiving:
 
-1. Use Obsidian’s native archive/trash behavior if available through the API.
-2. If native archive is not available, use a configurable fallback archive folder setting.
+1. Move the source note to the configured archive folder after derivative creation and tracker updates succeed.
+2. Write final archive paths into derivative-note and completed-action-plan metadata so backlinks remain resolvable.
 
 Required setting:
 
@@ -236,7 +236,7 @@ Required setting:
 
 After successful execution:
 
-- archive the original source note
+- move the original source note to the configured archive folder
 - move the completed action plan to `Action Plans/Completed`
 
 If the user setting indicates action plans should also be archived, archive them instead of moving them to `Action Plans/Completed`.

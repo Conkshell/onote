@@ -91,6 +91,7 @@ type ProgramDashboardNoteFacts = {
 	summary: string;
 	isActionPlan: boolean;
 	isDerivative: boolean;
+	isProgramDashboard: boolean;
 	modifiedAt: number;
 };
 
@@ -334,6 +335,11 @@ export default class OnotePlugin extends Plugin {
 
 		try {
 			const planContent = await this.app.vault.read(planFile);
+			if (this.isCompletedActionPlanContent(planContent)) {
+				new Notice("Onote: this action plan has already been completed.");
+				return;
+			}
+
 			const parsed = this.parseActionPlanNote(planContent);
 			if (!parsed.sourceNotePath) {
 				new Notice("Onote: this note is not a valid action plan.");
@@ -343,19 +349,21 @@ export default class OnotePlugin extends Plugin {
 				throw new Error("No derivative notes were parsed from Proposed Derivative Notes.");
 			}
 
-			const sourceFile = this.app.vault.getAbstractFileByPath(parsed.sourceNotePath);
-			if (!(sourceFile instanceof TFile)) {
+			const sourceFile = this.resolveSourceFileForActionPlan(parsed.sourceNotePath);
+			if (!sourceFile) {
 				throw new Error(`Source note not found: ${parsed.sourceNotePath}`);
 			}
 
-			const completedActionPlanPath = this.settings.archiveCompletedActionPlans
-				? null
-				: await this.getAvailableMarkdownPath(
-						`${ACTION_PLANS_COMPLETED_FOLDER}/${this.sanitizeFileName(planFile.basename)}.md`,
-				  );
+			const sourceArchivePath = await this.resolveSourceArchivePath(sourceFile);
+			const completedActionPlanPath = await this.resolveCompletedActionPlanPath(planFile);
 
 			new Notice("Onote: creating derivative notes...");
-			const derivativeFiles = await this.createDerivativeNotesFromPlan(sourceFile, planFile, completedActionPlanPath ?? planFile.path, parsed);
+			const derivativeFiles = await this.createDerivativeNotesFromPlan(
+				sourceFile,
+				sourceArchivePath,
+				completedActionPlanPath,
+				parsed,
+			);
 
 			new Notice("Onote: updating trackers...");
 			const primaryReference = derivativeFiles[0] ?? sourceFile;
@@ -365,8 +373,8 @@ export default class OnotePlugin extends Plugin {
 			await this.appendItemsToTracker(this.settings.peopleCoachingTrackerPath, "People - Coaching", primaryReference, parsed.peopleCoachingNotes);
 
 			new Notice("Onote: finalizing source note and action plan...");
-			const sourceArchiveNotice = await this.archiveSourceNote(sourceFile);
-			await this.markOpenActionPlanTasksComplete(planFile);
+			const sourceArchiveNotice = await this.archiveSourceNote(sourceFile, sourceArchivePath);
+			await this.markActionPlanComplete(planFile, sourceArchivePath);
 			const actionPlanNotice = await this.completeActionPlan(planFile, completedActionPlanPath);
 
 			await this.app.workspace.getLeaf(true).openFile(derivativeFiles[0] ?? primaryReference);
@@ -380,7 +388,7 @@ export default class OnotePlugin extends Plugin {
 
 	private async createDerivativeNotesFromPlan(
 		sourceFile: TFile,
-		actionPlanFile: TFile,
+		finalSourceNotePath: string,
 		finalActionPlanPath: string,
 		plan: ParsedActionPlanNote,
 	): Promise<TFile[]> {
@@ -392,16 +400,15 @@ export default class OnotePlugin extends Plugin {
 			const normalized = this.normalizeDerivativeNotePlan(derivative);
 			const category = await this.ensureCategory(normalized.category);
 			const folderPath = await this.resolveDerivativeFolder(normalized, category);
-			const derivativePath = await this.getAvailableMarkdownPath(
-				`${folderPath}/${this.ensureTimestampedTitle(timestampPrefix, normalized.title)}.md`,
-			);
+			const preferredDerivativePath = `${folderPath}/${this.ensureTimestampedTitle(timestampPrefix, normalized.title)}.md`;
 			const derivativeContent = this.buildDerivativeNoteContent(
 				normalized,
 				sourceFile,
+				finalSourceNotePath,
 				finalActionPlanPath,
 				taskAssignments.get(index) ?? [],
 			);
-			const derivativeFile = await this.app.vault.create(derivativePath, derivativeContent);
+			const derivativeFile = await this.upsertDerivativeNote(preferredDerivativePath, derivativeContent, finalSourceNotePath, finalActionPlanPath);
 			createdFiles.push(derivativeFile);
 
 			await this.ensureCategoryHomePage(category);
@@ -590,41 +597,61 @@ export default class OnotePlugin extends Plugin {
 		return configured?.folderPath || "Programs";
 	}
 
-	private async archiveSourceNote(sourceFile: TFile): Promise<string> {
-		if (typeof this.app.fileManager.trashFile === "function") {
-			await this.app.fileManager.trashFile(sourceFile);
-			return `Source note moved using Obsidian archive/trash behavior.`;
+	private resolveSourceFileForActionPlan(sourceNotePath: string): TFile | null {
+		const direct = this.app.vault.getAbstractFileByPath(sourceNotePath);
+		if (direct instanceof TFile) {
+			return direct;
 		}
 
 		const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
 		if (!archiveFolder) {
+			return null;
+		}
+		const originalBaseName = this.stripFileExtension(this.basenameFromPath(sourceNotePath));
+		const archivedCandidates = this.app.vault
+			.getMarkdownFiles()
+			.filter((file) => file.path.startsWith(`${archiveFolder}/`))
+			.filter((file) => file.basename === originalBaseName || new RegExp(`^${this.escapeRegex(originalBaseName)} \\d+$`).test(file.basename))
+			.sort((a, b) => a.path.localeCompare(b.path));
+		return archivedCandidates[0] ?? null;
+	}
+
+	private async resolveSourceArchivePath(sourceFile: TFile): Promise<string> {
+		const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
+		if (!archiveFolder) {
 			throw new Error("Archive Folder Path is empty.");
 		}
-		await this.ensureFolderExists(archiveFolder);
-		const archivePath = await this.getAvailableMarkdownPath(`${archiveFolder}/${this.sanitizeFileName(sourceFile.basename)}.md`);
+		if (sourceFile.path.startsWith(`${archiveFolder}/`)) {
+			return sourceFile.path;
+		}
+		return this.getAvailableMarkdownPath(`${archiveFolder}/${this.sanitizeFileName(sourceFile.basename)}.md`);
+	}
+
+	private async resolveCompletedActionPlanPath(planFile: TFile): Promise<string> {
+		const folder = this.settings.archiveCompletedActionPlans
+			? this.normalizeFolder(this.settings.archiveFolderPath)
+			: ACTION_PLANS_COMPLETED_FOLDER;
+		if (!folder) {
+			throw new Error("Completed action plan folder path is empty.");
+		}
+		return this.getAvailableMarkdownPath(`${folder}/${this.sanitizeFileName(planFile.basename)}.md`);
+	}
+
+	private async archiveSourceNote(sourceFile: TFile, archivePath: string): Promise<string> {
+		if (sourceFile.path === archivePath) {
+			return `Source note already archived at ${archivePath}.`;
+		}
+		await this.ensureFolderExists(this.dirnameFromPath(archivePath));
 		await this.app.fileManager.renameFile(sourceFile, archivePath);
 		return `Source note archived to ${archivePath}.`;
 	}
 
-	private async completeActionPlan(planFile: TFile, completedActionPlanPath: string | null): Promise<string> {
-		if (this.settings.archiveCompletedActionPlans) {
-			if (typeof this.app.fileManager.trashFile === "function") {
-				await this.app.fileManager.trashFile(planFile);
-				return "Action plan archived using Obsidian archive/trash behavior.";
-			}
-
-			const archiveFolder = this.normalizeFolder(this.settings.archiveFolderPath);
-			await this.ensureFolderExists(archiveFolder);
-			const archivePath = await this.getAvailableMarkdownPath(`${archiveFolder}/${this.sanitizeFileName(planFile.basename)}.md`);
-			await this.app.fileManager.renameFile(planFile, archivePath);
-			return `Action plan archived to ${archivePath}.`;
-		}
-
-		if (!completedActionPlanPath) {
-			throw new Error("Completed action plan path was not resolved.");
-		}
-		await this.ensureFolderExists(ACTION_PLANS_COMPLETED_FOLDER);
+	private async completeActionPlan(planFile: TFile, completedActionPlanPath: string): Promise<string> {
+		await this.ensureFolderExists(this.dirnameFromPath(completedActionPlanPath));
 		await this.app.fileManager.renameFile(planFile, completedActionPlanPath);
+		if (this.settings.archiveCompletedActionPlans) {
+			return `Action plan archived to ${completedActionPlanPath}.`;
+		}
 		return `Action plan moved to ${completedActionPlanPath}.`;
 	}
 
@@ -699,6 +726,10 @@ export default class OnotePlugin extends Plugin {
 		const related: ProgramDashboardNoteFacts[] = [];
 		for (const file of files) {
 			const facts = await this.getProgramDashboardNoteFacts(file);
+			if (facts.isActionPlan || facts.isProgramDashboard || (!facts.isDerivative && this.isProcessingArtifactPath(file.path))) {
+				continue;
+			}
+
 			const joined = [facts.content, ...facts.wikiLinks, ...facts.tags].join("\n").toLowerCase();
 			const hasProgramFrontmatter = facts.programs.some((entry) => entry.toLowerCase() === canonicalProgramName.toLowerCase());
 			const hasRelatedSection = facts.relatedPrograms.some((entry) => entry.toLowerCase() === canonicalProgramName.toLowerCase());
@@ -738,6 +769,7 @@ export default class OnotePlugin extends Plugin {
 			summary: this.extractSummaryForDashboard(content),
 			isActionPlan: this.readFrontmatterValue(content, "onote_type") === "action_plan",
 			isDerivative: this.readFrontmatterValue(content, "onote_type") === "derivative_note",
+			isProgramDashboard: this.readFrontmatterValue(content, "onote_type") === "program_dashboard",
 			modifiedAt: this.getFileModifiedAt(file),
 		};
 		this.programNoteFactsCache.set(file.path, facts);
@@ -952,13 +984,12 @@ export default class OnotePlugin extends Plugin {
 
 	private buildDefaultContextFiles(): DefaultContextFile[] {
 		const glossaryLines = ["# Program Glossary", ""];
-		for (const program of DEFAULT_PROGRAMS) {
+		for (const program of this.settings.programs) {
 			glossaryLines.push(`## ${program.name}`);
 			glossaryLines.push(`Acronyms: ${program.acronyms.join(", ")}`);
 			glossaryLines.push("Type: Program");
 			glossaryLines.push("");
 		}
-		glossaryLines.push("Related: [[MEGALODON]]");
 
 		return [
 			{
@@ -2030,18 +2061,19 @@ Rule: Do not rewrite PIPE as pipeline.
 	private buildDerivativeNoteContent(
 		plan: DerivativeNotePlan,
 		sourceFile: TFile,
+		sourceNotePath: string,
 		actionPlanPath: string,
 		actionItems: string[],
 	): string {
 		const createdAt = new Date().toISOString();
-		const sourceLink = `[[${this.app.metadataCache.fileToLinktext(sourceFile, "", true)}]]`;
+		const sourceLink = `[[${this.linkTextForPath(sourceNotePath, sourceFile)}]]`;
 		const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
 		const uniqueActionItems = this.dedupeTasksAgainstSummary(actionItems, plan.summaryMarkdown);
 		return [
 			"---",
 			'onote_type: derivative_note',
 			`category: "${this.escapeYamlString(plan.category)}"`,
-			`source_note_path: "${this.escapeYamlString(sourceFile.path)}"`,
+			`source_note_path: "${this.escapeYamlString(sourceNotePath)}"`,
 			`action_plan_path: "${this.escapeYamlString(actionPlanPath)}"`,
 			`created_at: "${createdAt}"`,
 			this.yamlArray("programs", plan.relatedPrograms),
@@ -2132,17 +2164,63 @@ Rule: Do not rewrite PIPE as pipeline.
 			return;
 		}
 		const trackerFile = await this.getOrCreateMarkdownFile(normalizedPath, `# ${title}\n`);
+		const existingContent = await this.app.vault.read(trackerFile);
 		const sourceLink = this.app.metadataCache.fileToLinktext(sourceFile, normalizedPath, true);
-		const block = ["", `[[${sourceLink}]]`, "", ...items.map((item) => `- ${item}`), ""].join("\n");
-		await this.app.vault.append(trackerFile, block);
+		const markerKey = this.escapeHtmlCommentValue(sourceFile.path);
+		const startMarker = `<!-- ONOTE_TRACKER_ENTRY_START ${markerKey} -->`;
+		const endMarker = "<!-- ONOTE_TRACKER_ENTRY_END -->";
+		const uniqueItems = this.uniquePreservingOrder(items);
+		const block = [startMarker, `[[${sourceLink}]]`, "", ...uniqueItems.map((item) => `- ${item}`), endMarker].join("\n");
+		const existingBlockPattern = new RegExp(
+			`${this.escapeRegex(startMarker)}[\\s\\S]*?${this.escapeRegex(endMarker)}`,
+			"m",
+		);
+
+		if (existingBlockPattern.test(existingContent)) {
+			const updated = existingContent.replace(existingBlockPattern, block);
+			if (updated !== existingContent) {
+				await this.app.vault.modify(trackerFile, updated);
+			}
+			return;
+		}
+
+		await this.app.vault.append(trackerFile, `\n\n${block}\n`);
 	}
 
-	private async markOpenActionPlanTasksComplete(planFile: TFile): Promise<void> {
+	private isCompletedActionPlanContent(content: string): boolean {
+		return !!this.readFrontmatterValue(content, "completed_at");
+	}
+
+	private async markActionPlanComplete(planFile: TFile, finalSourceNotePath: string): Promise<void> {
 		const content = await this.app.vault.read(planFile);
-		const updated = content.replace(/^- \[ \] /gm, "- [x] ");
+		const withCompletedTasks = content.replace(/^- \[ \] /gm, "- [x] ");
+		const updated = this.upsertFrontmatterValues(withCompletedTasks, {
+			source_note_path: finalSourceNotePath,
+			completed_at: new Date().toISOString(),
+		});
 		if (updated !== content) {
 			await this.app.vault.modify(planFile, updated);
 		}
+	}
+
+	private upsertFrontmatterValues(content: string, values: Record<string, string>): string {
+		const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+		const lines = frontmatterMatch ? frontmatterMatch[1].split("\n") : [];
+		for (const [key, value] of Object.entries(values)) {
+			const rendered = `${key}: "${this.escapeYamlString(value)}"`;
+			const index = lines.findIndex((line) => new RegExp(`^${this.escapeRegex(key)}\\s*:`).test(line));
+			if (index >= 0) {
+				lines[index] = rendered;
+			} else {
+				lines.push(rendered);
+			}
+		}
+
+		const updatedFrontmatter = `---\n${lines.join("\n")}\n---`;
+		if (frontmatterMatch) {
+			return content.replace(/^---\n[\s\S]*?\n---/, updatedFrontmatter);
+		}
+		return `${updatedFrontmatter}\n\n${content}`;
 	}
 
 	private async appendLinkUnderSection(filePath: string, sectionTitle: string, link: string): Promise<void> {
@@ -2177,12 +2255,39 @@ Rule: Do not rewrite PIPE as pipeline.
 		return this.app.vault.create(path, initialContent);
 	}
 
+	private async upsertDerivativeNote(
+		preferredPath: string,
+		content: string,
+		finalSourceNotePath: string,
+		finalActionPlanPath: string,
+	): Promise<TFile> {
+		const existing = this.app.vault.getAbstractFileByPath(preferredPath);
+		if (existing instanceof TFile) {
+			const existingContent = await this.app.vault.read(existing);
+			const existingSourcePath = this.readFrontmatterValue(existingContent, "source_note_path");
+			const existingActionPlanPath = this.readFrontmatterValue(existingContent, "action_plan_path");
+			if (
+				existingSourcePath === finalSourceNotePath ||
+				existingActionPlanPath === finalActionPlanPath
+			) {
+				await this.app.vault.modify(existing, content);
+				return existing;
+			}
+		}
+
+		const derivativePath = await this.getAvailableMarkdownPath(preferredPath);
+		return this.app.vault.create(derivativePath, content);
+	}
+
 	private async ensureFolderExists(folderPath: string): Promise<void> {
 		const segments = folderPath.split("/").filter(Boolean);
 		let currentPath = "";
 		for (const segment of segments) {
 			currentPath = currentPath ? `${currentPath}/${segment}` : segment;
 			const existing = this.app.vault.getAbstractFileByPath(currentPath);
+			if (existing instanceof TFile) {
+				throw new Error(`Cannot create folder because a file exists at ${currentPath}.`);
+			}
 			if (!existing) {
 				await this.app.vault.createFolder(currentPath);
 			}
@@ -2330,11 +2435,25 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private normalizeFolder(folder: string): string {
-		return folder.trim().replace(/^\/+|\/+$/g, "");
+		return this.normalizeVaultPath(folder);
 	}
 
 	private normalizeFilePath(path: string): string {
-		return path.trim().replace(/^\/+|\/+$/g, "");
+		return this.normalizeVaultPath(path);
+	}
+
+	private normalizeVaultPath(value: string): string {
+		const trimmed = value.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+		if (!trimmed) {
+			return "";
+		}
+		return trimmed
+			.split("/")
+			.map((segment) => segment.trim())
+			.filter((segment) => segment && segment !== "." && segment !== "..")
+			.map((segment) => this.sanitizeFileName(segment))
+			.filter(Boolean)
+			.join("/");
 	}
 
 	private escapeYamlString(value: string): string {
@@ -2343,6 +2462,10 @@ Rule: Do not rewrite PIPE as pipeline.
 
 	private escapeRegex(value: string): string {
 		return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	}
+
+	private escapeHtmlCommentValue(value: string): string {
+		return value.replace(/--/g, "- -").trim();
 	}
 
 	private isActionPlanPath(path: string): boolean {
@@ -2382,6 +2505,13 @@ Rule: Do not rewrite PIPE as pipeline.
 		);
 	}
 
+	private isProcessingArtifactPath(path: string): boolean {
+		const normalized = path.toLowerCase();
+		return ["action plan", "follow-up", "delegation", "strategy theme", "people - coaching", "scratch", "temp", "draft"].some(
+			(marker) => normalized.includes(marker),
+		);
+	}
+
 	private looksTimestampedName(name: string): boolean {
 		return /^\d{4}-\d{2}-\d{2} \d{4} /.test(name);
 	}
@@ -2408,14 +2538,21 @@ Rule: Do not rewrite PIPE as pipeline.
 		return path.split("/").pop() ?? path;
 	}
 
+	private dirnameFromPath(path: string): string {
+		return path.includes("/") ? path.split("/").slice(0, -1).join("/") : "";
+	}
+
 	private stripFileExtension(name: string): string {
 		return name.replace(/\.md$/i, "");
 	}
 
-	private linkTextForPath(path: string): string {
+	private linkTextForPath(path: string, fallbackFile?: TFile): string {
 		const file = this.app.vault.getAbstractFileByPath(path);
 		if (file instanceof TFile) {
 			return this.app.metadataCache.fileToLinktext(file, "", true);
+		}
+		if (fallbackFile && this.basenameFromPath(path) === fallbackFile.name) {
+			return this.app.metadataCache.fileToLinktext(fallbackFile, "", true);
 		}
 		return this.stripFileExtension(this.basenameFromPath(path));
 	}
@@ -2471,7 +2608,7 @@ class OnoteSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Archive completed action plans")
-			.setDesc("If enabled, completed action plans use Obsidian archive/trash behavior instead of moving to Action Plans/Completed.")
+			.setDesc("If enabled, completed action plans are moved to the configured archive folder instead of Action Plans/Completed.")
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.archiveCompletedActionPlans).onChange(async (value) => {
 					this.plugin.settings.archiveCompletedActionPlans = value;

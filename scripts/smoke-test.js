@@ -125,7 +125,6 @@ group by path
 function createVaultHarness() {
   const files = new Map();
   const folders = new Set();
-  const trashed = [];
   let lastOpened = null;
   let activeFile = null;
 
@@ -187,10 +186,6 @@ function createVaultHarness() {
       })();
       files.set(newPath, file);
     },
-    async trashFile(file) {
-      files.delete(file.path);
-      trashed.push(file.path);
-    },
   };
 
   const metadataCache = {
@@ -224,7 +219,6 @@ function createVaultHarness() {
     app: { vault, fileManager, metadataCache, workspace },
     files,
     folders,
-    trashed,
     createFile,
     setActiveFile(file) {
       activeFile = file;
@@ -270,6 +264,18 @@ async function main() {
   };
 
   await plugin.ensureOpenTasksDashboard();
+
+  assert(
+    plugin.normalizeFilePath("../Unsafe:Folder\\Nested/./../Note?.md") === "Unsafe Folder/Nested/Note .md",
+    "Vault path normalization did not remove unsafe path segments and characters",
+  );
+
+  const seededContextFiles = plugin.buildDefaultContextFiles();
+  assert(
+    seededContextFiles[0].content.includes("## Object Based Orchestration") &&
+      !seededContextFiles[0].content.includes("## STARSKIPPER"),
+    "Default AI context did not use configured programs",
+  );
 
   const dashboard = harness.files.get("Action Plans/Open Tasks.md");
   assert(dashboard, "Open Tasks dashboard was not created");
@@ -441,9 +447,36 @@ async function main() {
     harness.files.has("Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"),
     "Completed action plan was not moved to Action Plans/Completed",
   );
+  const completedActionPlan = harness.files.get("Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md");
   assert(
-    harness.trashed.includes("Inbox/2026-04-26 1254 - Mixed Topics.md"),
-    "Source note was not archived using native trash behavior",
+    completedActionPlan.content.includes('source_note_path: "Archive/2026-04-26 1254 - Mixed Topics.md"') &&
+      completedActionPlan.content.includes("completed_at:"),
+    "Completed action plan did not record final source path and completion marker",
+  );
+  assert(
+    harness.files.has("Archive/2026-04-26 1254 - Mixed Topics.md"),
+    "Source note was not moved to the configured archive folder",
+  );
+  assert(
+    programDerivative.content.includes('source_note_path: "Archive/2026-04-26 1254 - Mixed Topics.md"') &&
+      programDerivative.content.includes('action_plan_path: "Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"'),
+    "Derivative note did not record final source/action-plan paths",
+  );
+
+  const derivativeCountAfterExecution = [...harness.files.keys()].filter((filePath) =>
+    /2026-04-26 1254 - (Roadmap Release Process|Ben Ownership Coaching|ISG Strategy Direction)( \d+)?\.md$/.test(filePath),
+  ).length;
+  const delegationTrackerBeforeRerun = harness.files.get("Action Plans/Delegations.md").content;
+
+  await plugin.executeCurrentActionPlan();
+
+  const derivativeCountAfterRerun = [...harness.files.keys()].filter((filePath) =>
+    /2026-04-26 1254 - (Roadmap Release Process|Ben Ownership Coaching|ISG Strategy Direction)( \d+)?\.md$/.test(filePath),
+  ).length;
+  assert(derivativeCountAfterRerun === derivativeCountAfterExecution, "Completed action plan rerun created duplicate derivative notes");
+  assert(
+    harness.files.get("Action Plans/Delegations.md").content === delegationTrackerBeforeRerun,
+    "Completed action plan rerun duplicated tracker entries",
   );
 
   harness.createFile(
@@ -529,6 +562,7 @@ programs:
   assert(dashboardFile.content.includes("## Current Status"), "Program dashboard missing current status section");
   assert(dashboardFile.content.includes('path includes "Programs/MEGALODON"'), "Program dashboard task query did not target program folder");
   assert(dashboardFile.content.includes("[[2026-04-26 1410 - Staffing]]"), "Program dashboard missing recent note link");
+  assert(!dashboardFile.content.includes("- [[MEGALODON]]"), "Program dashboard included itself as a recent note");
   assert(dashboardFile.content.includes("Use risk-based release framing for MEGALODON."), "Program dashboard missing recent decision");
   assert(dashboardFile.content.includes("systems integration lead or solution architect"), "Program dashboard missing strategy theme");
   assert(

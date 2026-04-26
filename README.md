@@ -15,7 +15,7 @@ The plugin follows a two-step workflow:
 
 During execution:
 
-- the original source note is archived using Obsidian archive/trash behavior when available
+- the original source note is moved to the configured archive folder
 - the completed action plan is moved to `Action Plans/Completed` by default
 - no single root-level final note is created
 
@@ -91,7 +91,7 @@ When you run `Execute Current Action Plan` with the reviewed action-plan note op
 - ensures `Action Plans/Open Tasks.md` exists as a Tasks-query dashboard instead of a copied task tracker
 - ensures category home pages exist and appends links under `Recent Notes`
 - ensures program home pages exist and appends links to relevant program notes
-- archives the source note
+- moves the source note to the configured archive folder
 - moves the completed action plan to `Action Plans/Completed` by default
 
 If derivative-note parsing fails, the source note is not archived.
@@ -275,10 +275,10 @@ Onote supports these settings:
 - people / coaching tracker path
 - acronym list path
 - archive completed action plans toggle
+- archive folder path
 - programs
 - categories
 - AI Context Folder Path
-- Archive Folder Path
 
 ## Development
 
