@@ -1751,8 +1751,8 @@ Rule: Do not rewrite PIPE as pipeline.
   }
   buildDerivativeNoteContent(plan, sourceFile, sourceNoteId, sourceNotePath, actionPlanPath, actionItems) {
     const createdAt = (/* @__PURE__ */ new Date()).toISOString();
-    const sourceLink = `[[${this.linkTextForPath(sourceNotePath, sourceFile)}]]`;
-    const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
+    const sourceLink = this.buildAliasedLink(sourceNotePath, "source...", sourceFile);
+    const actionPlanLink = this.buildAliasedLink(actionPlanPath, "action plan...");
     const uniqueActionItems = this.dedupeTasksAgainstSummary(actionItems, plan.summaryMarkdown);
     return [
       "---",
@@ -1817,7 +1817,7 @@ Rule: Do not rewrite PIPE as pipeline.
     return result;
   }
   normalizeTaskText(value) {
-    return value.toLowerCase().replace(/^\-\s\[[ xX]\]\s+/, "").replace(/[^\p{L}\p{N}\s📅-]/gu, " ").replace(/\s+/g, " ").trim();
+    return value.toLowerCase().replace(/^\-\s\[[ xX]\]\s+/, "").replace(/➕\s*\d{4}-\d{2}-\d{2}/g, " ").replace(/📅\s*\d{4}-\d{2}-\d{2}/g, " ").replace(/[^\p{L}\p{N}\s📅-]/gu, " ").replace(/\s+/g, " ").trim();
   }
   sanitizeTaskText(value) {
     let sanitized = value.trim();
@@ -2053,11 +2053,17 @@ ${text || "_None_"}`;
 ${body}`;
   }
   formatTaskSection(title, items) {
-    const normalizedItems = this.asUniqueTaskArray(items);
+    const normalizedItems = this.asUniqueTaskArray(items).map((item) => this.appendCreatedDateToTask(item));
     const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
     return `## ${title}
 
 ${body}`;
+  }
+  appendCreatedDateToTask(taskText) {
+    if (/➕\s*\d{4}-\d{2}-\d{2}/.test(taskText)) {
+      return taskText;
+    }
+    return `${taskText} \u2795 ${window.moment().format("YYYY-MM-DD")}`;
   }
   buildMetaBindButton(label, commandId) {
     return [`label: ${label}`, "style: primary", "action:", "  type: command", `  command: ${commandId}`].join("\n");
@@ -2237,6 +2243,9 @@ ${body}`;
       return this.app.metadataCache.fileToLinktext(fallbackFile, "", true);
     }
     return this.stripFileExtension(this.basenameFromPath(path));
+  }
+  buildAliasedLink(path, alias, fallbackFile) {
+    return `[[${this.linkTextForPath(path, fallbackFile)}|${alias}]]`;
   }
 };
 var OnoteSettingTab = class extends import_obsidian.PluginSettingTab {

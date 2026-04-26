@@ -2185,8 +2185,8 @@ Rule: Do not rewrite PIPE as pipeline.
 		actionItems: string[],
 	): string {
 		const createdAt = new Date().toISOString();
-		const sourceLink = `[[${this.linkTextForPath(sourceNotePath, sourceFile)}]]`;
-		const actionPlanLink = `[[${this.linkTextForPath(actionPlanPath)}]]`;
+		const sourceLink = this.buildAliasedLink(sourceNotePath, "source...", sourceFile);
+		const actionPlanLink = this.buildAliasedLink(actionPlanPath, "action plan...");
 		const uniqueActionItems = this.dedupeTasksAgainstSummary(actionItems, plan.summaryMarkdown);
 		return [
 			"---",
@@ -2259,6 +2259,8 @@ Rule: Do not rewrite PIPE as pipeline.
 		return value
 			.toLowerCase()
 			.replace(/^\-\s\[[ xX]\]\s+/, "")
+			.replace(/➕\s*\d{4}-\d{2}-\d{2}/g, " ")
+			.replace(/📅\s*\d{4}-\d{2}-\d{2}/g, " ")
 			.replace(/[^\p{L}\p{N}\s📅-]/gu, " ")
 			.replace(/\s+/g, " ")
 			.trim();
@@ -2532,9 +2534,16 @@ Rule: Do not rewrite PIPE as pipeline.
 	}
 
 	private formatTaskSection(title: string, items: string[]): string {
-		const normalizedItems = this.asUniqueTaskArray(items);
+		const normalizedItems = this.asUniqueTaskArray(items).map((item) => this.appendCreatedDateToTask(item));
 		const body = normalizedItems.length > 0 ? normalizedItems.map((item) => `- [ ] ${item}`).join("\n") : "- [ ] _No action items yet_";
 		return `## ${title}\n\n${body}`;
+	}
+
+	private appendCreatedDateToTask(taskText: string): string {
+		if (/➕\s*\d{4}-\d{2}-\d{2}/.test(taskText)) {
+			return taskText;
+		}
+		return `${taskText} ➕ ${window.moment().format("YYYY-MM-DD")}`;
 	}
 
 	private buildMetaBindButton(label: string, commandId: string): string {
@@ -2760,6 +2769,10 @@ Rule: Do not rewrite PIPE as pipeline.
 			return this.app.metadataCache.fileToLinktext(fallbackFile, "", true);
 		}
 		return this.stripFileExtension(this.basenameFromPath(path));
+	}
+
+	private buildAliasedLink(path: string, alias: string, fallbackFile?: TFile): string {
+		return `[[${this.linkTextForPath(path, fallbackFile)}|${alias}]]`;
 	}
 }
 

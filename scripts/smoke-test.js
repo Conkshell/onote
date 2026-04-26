@@ -406,6 +406,10 @@ async function main() {
     actionPlanContent.includes("- [ ] Follow up with Andy on roadmap view before PIPE 📅 2026-05-02"),
     "Action plan did not preserve due-date task text",
   );
+  assert(
+    actionPlanContent.includes("➕ 2026-04-26"),
+    "Action plan did not add created-date metadata to generated tasks",
+  );
 
   const checkedActionPlanContent = actionPlanContent.replace(
     "- [ ] Ask Ben about OBO approvals",
@@ -430,7 +434,11 @@ async function main() {
     "Unchecked roadmap task was not carried into derivative note with due date preserved",
   );
   assert(
-    !programDerivative.content.includes("## Action Items\n\n- [ ] Ask Hulbs what he means by tier 1"),
+    programDerivative.content.includes("➕ 2026-04-26"),
+    "Derivative note did not add created-date metadata to generated tasks",
+  );
+  assert(
+    (programDerivative.content.match(/Ask Hulbs what he means by tier 1/g) || []).length === 1,
     "Program derivative duplicated a task that was already present in summary markdown",
   );
   assert(
@@ -475,6 +483,11 @@ async function main() {
       /source_note_id:\s*"[a-z0-9-]+"/i.test(programDerivative.content) &&
       programDerivative.content.includes('action_plan_path: "Action Plans/Completed/2026-04-26 1254 - Mixed Topics - Action Plan.md"'),
     "Derivative note did not record final source/action-plan paths",
+  );
+  assert(
+    programDerivative.content.includes("- Source Note: [[2026-04-26 1254 - Mixed Topics|source...]]") &&
+      programDerivative.content.includes("- Action Plan: [[2026-04-26 1254 - Mixed Topics - Action Plan|action plan...]]"),
+    "Derivative note did not use shortened source/action-plan link labels",
   );
 
   const derivativeCountAfterExecution = [...harness.files.keys()].filter((filePath) =>
